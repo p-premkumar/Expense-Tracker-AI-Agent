@@ -68,7 +68,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if text.startswith('/'):
         return
     
-    # Parse expense
+    # Check if it's multiple expenses (contains newlines)
+    if '\n' in text:
+        # Parse multiple expenses
+        expenses = parser.parse_multiple_expenses(text)
+        
+        if not expenses:
+            await update.message.reply_text(
+                "❌ Could not parse any expenses from your input.\n\n"
+                "Format: Each line should have amount and description\n"
+                "Example:\n"
+                "Coffee 30\n"
+                "Apple 150\n"
+                "Tea 40"
+            )
+            return
+        
+        # Store all expenses
+        success_count = 0
+        response_lines = ["✅ **Multiple Expenses Recorded!**\n"]
+        
+        for amount, category, description in expenses:
+            if parser.is_valid_expense(amount, category):
+                db.add_expense(user.id, amount, category, description, source="text")
+                success_count += 1
+                response_lines.append(f"✓ {description}")
+                response_lines.append(f"  Amount: {CURRENCY}{amount:.2f} | Category: {category}")
+        
+        if success_count > 0:
+            response_lines.append(f"\n📊 Total: {success_count} expenses recorded")
+            response_lines.append("Use /summary to see your spending patterns!")
+            confirmation = "\n".join(response_lines)
+            await update.message.reply_text(confirmation, parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Could not process any of the expenses. Please check the format.")
+        
+        return
+    
+    # Single expense parsing
     amount, category, description = parser.parse_expense(text)
     
     if not amount:
@@ -77,7 +114,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Try:\n"
             "• 'Spent 150 for biriyani'\n"
             "• '50 on transport'\n"
-            "• '200 for movie'"
+            "• '200 for movie'\n\n"
+            "Or for multiple expenses, send each on a new line:\n"
+            "Coffee 30\n"
+            "Apple 150\n"
+            "Tea 40"
         )
         return
     

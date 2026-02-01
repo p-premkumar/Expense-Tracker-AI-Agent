@@ -14,20 +14,49 @@ class ExpenseParser:
         Parse expense from natural language text
         Returns: (amount, category, description)
         """
-        text_lower = text.lower()
-        
-        # Extract amount
-        amount = self._extract_amount(text)
+        # normalize
+        text_str = text or ""
+
+        # Extract amount (float)
+        amount = self._extract_amount(text_str)
         if not amount:
             return None, None, None
-        
-        # Extract category
-        category = self._extract_category(text_lower)
-        
-        # Description
-        description = text
-        
+
+        # Remove the first amount/token from description to avoid storing the numeric value
+        # Pattern: optional currency symbol, number with optional decimals, optional unit words
+        amt_pattern = r"[\₹\$\€\£]?\s*\d+(?:[.,]\d{1,2})?\s*(?:rs|rupees|dollars)?"
+        description = re.sub(amt_pattern, "", text_str, flags=re.IGNORECASE, count=1)
+        # collapse whitespace and strip punctuation
+        description = re.sub(r"\s{2,}", " ", description).strip()
+        description = description.strip(" -:;,.\n\t")
+
+        # fallback to original if description becomes empty
+        if not description:
+            description = text_str
+
+        # Determine category using cleaned description (lowercased)
+        category = self._extract_category(description.lower())
+
         return amount, category, description
+
+    def parse_multiple_expenses(self, text):
+        """
+        Parse multiple expenses from multi-line text
+        Returns: list of (amount, category, description) tuples
+        """
+        expenses = []
+        lines = text.strip().split('\n')
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            amount, category, description = self.parse_expense(line)
+            if amount and category:
+                expenses.append((amount, category, description))
+
+        return expenses
     
     def _extract_amount(self, text):
         """Extract amount from text"""
@@ -61,7 +90,10 @@ class ExpenseParser:
         for category, keywords in EXPENSE_PATTERNS.items():
             for keyword in keywords:
                 if keyword in text_lower:
-                    return category.capitalize()
+                    # Match category name from EXPENSE_CATEGORIES (case-insensitive)
+                    for cat_name in EXPENSE_CATEGORIES:
+                        if cat_name.lower() == category.lower():
+                            return cat_name
         
         return "Other"
     

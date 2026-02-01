@@ -23,6 +23,10 @@ EXPENSE_CATEGORIES = [
     "Education",
     "Travel",
     "Work",
+    "Meat",
+    "Vegetables",
+    "Fruits",
+    "Hot Drinks",
     "Other"
 ]
 
@@ -31,7 +35,7 @@ CURRENCY = "₹"
 
 # Text patterns for expense detection
 EXPENSE_PATTERNS = {
-    "food": ["food", "eat", "lunch", "breakfast", "dinner", "biriyani", "pizza", "burger", "coffee"],
+    "food": ["food", "eat", "lunch", "breakfast", "dinner", "biriyani", "pizza", "burger"],
     "transport": ["transport", "travel", "taxi", "bus", "metro", "fuel", "petrol"],
     "entertainment": ["movie", "game", "show", "concert", "play", "entertainment"],
     "shopping": ["shop", "buy", "clothes", "shoe", "gift","shirt"],
@@ -40,4 +44,8 @@ EXPENSE_PATTERNS = {
     "education": ["course", "book", "education", "training", "tuition"],
     "travel": ["hotel", "flight", "vacation", "trip", "stay"],
     "work": ["office", "work", "project", "meeting"],
+    "meat": ["meat", "chicken", "fish", "beef", "pork", "mutton", "lamb", "steak"],
+    "vegetables": ["vegetables", "veggies", "broccoli", "carrot", "spinach", "tomato", "onion", "potato", "cabbage"],
+    "fruits": ["fruits", "apple", "banana", "orange", "mango", "grapes", "strawberry", "watermelon", "pineapple"],
+    "hot drinks": ["coffee", "tea", "cappuccino", "latte", "espresso", "hot chocolate"]
 }
