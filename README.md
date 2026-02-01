@@ -10,6 +10,7 @@ An intelligent Telegram bot that automatically tracks your daily expenses using 
 - **Weekly/Monthly Summaries**: Get detailed spending reports
 - **Category Tracking**: Breakdown of expenses by category
 - **SQLite Database**: Local storage of all expenses
+- **📊 Excel Export**: Download expenses as professional Excel files
 - **Multiple Input Methods**: 
   - Text messages
   - Screenshot uploads

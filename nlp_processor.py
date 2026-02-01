@@ -69,7 +69,7 @@ class ExpenseParser:
         """Validate if parsed data is valid"""
         if not amount or amount <= 0:
             return False
-        if not category or category not in EXPENSE_CATEGORIES and category != "Other":
+        if not category or (category not in EXPENSE_CATEGORIES and category != "Other"):
             return False
         return True
 

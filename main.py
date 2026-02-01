@@ -26,6 +26,10 @@ from bot_commands import (
     list_expenses,
     delete_expense,
     statistics,
+    export_all,
+    export_monthly,
+    export_weekly,
+    export_today_data,
 )
 
 # Set up logging
@@ -74,6 +78,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     # Store in database
+    db.add_expense(user.id, amount, category, description, source="text")
+    
     # Send confirmation
     confirmation = (
         f"✅ **Expense Recorded!**\n\n"
@@ -333,6 +339,10 @@ def main():
     application.add_handler(CommandHandler("list", list_expenses))
     application.add_handler(CommandHandler("delete", delete_expense))
     application.add_handler(CommandHandler("stats", statistics))
+    application.add_handler(CommandHandler("export", export_all))
+    application.add_handler(CommandHandler("export_monthly", export_monthly))
+    application.add_handler(CommandHandler("export_weekly", export_weekly))
+    application.add_handler(CommandHandler("export_today", export_today_data))
     
     # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -347,8 +357,10 @@ def main():
     print("[*] Expense Tracker Bot is running!")
     print("[*] Press Ctrl+C to stop.")
     
+    # Run the bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == '__main__':
     main()
+

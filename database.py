@@ -70,6 +70,19 @@ class ExpenseDatabase:
         conn.commit()
         conn.close()
     
+    def add_expense(self, user_id, amount, category, description, source="text", transaction_id=None, account_name=None, payment_method=None):
+        """Add a new expense"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO expenses (user_id, amount, category, description, source, transaction_id, account_name, payment_method)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, amount, category, description, source, transaction_id, account_name, payment_method))
+        
+        conn.commit()
+        conn.close()
+    
     def get_expenses(self, user_id, days=None):
         """Get expenses for a user"""
         conn = sqlite3.connect(self.db_path)

@@ -1,13 +1,16 @@
 """
 Telegram bot command handlers
 """
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import ExpenseDatabase
 from config import CURRENCY, EXPENSE_CATEGORIES
 from datetime import datetime
+from excel_exporter import ExcelExporter
 
 db = ExpenseDatabase()
+exporter = ExcelExporter()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start command handler"""
@@ -53,7 +56,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /list - Show last 10 expenses
 /stats - Detailed statistics
 
-📝 **How to Add Expenses:**
+� **Export to Excel:**
+/export - Export all expenses to Excel
+/export_monthly - Export last 30 days to Excel
+/export_weekly - Export last 7 days to Excel
+/export_today - Export today's expenses to Excel
+
+�📝 **How to Add Expenses:**
 Just send natural language messages like:
 • "Spent 150 for biriyani"
 • "Transport - 50"
@@ -191,3 +200,106 @@ async def statistics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         stats_text += f"\n💡 **Daily Average: {CURRENCY}{daily_avg:.2f}**"
     
     await update.message.reply_text(stats_text, parse_mode='Markdown')
+async def export_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export all expenses to Excel file"""
+    user_id = update.effective_user.id
+    
+    await update.message.reply_text("📊 Generating Excel file with all your expenses...", parse_mode='Markdown')
+    
+    try:
+        # Generate Excel file
+        filename = exporter.export_all_expenses(user_id)
+        
+        # Send file to user
+        with open(filename, 'rb') as excel_file:
+            await update.message.reply_document(
+                document=excel_file,
+                caption=f"📊 **All Expenses Report**\n\nGenerated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\nSheets included:\n• All Expenses\n• Summary\n• Monthly Breakdown",
+                parse_mode='Markdown'
+            )
+        
+        # Clean up
+        if os.path.exists(filename):
+            os.remove(filename)
+        
+        await update.message.reply_text("✅ Excel file exported successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating Excel file: {str(e)}")
+
+async def export_monthly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export monthly expenses to Excel file"""
+    user_id = update.effective_user.id
+    
+    await update.message.reply_text("📊 Generating monthly expense report...", parse_mode='Markdown')
+    
+    try:
+        # Generate Excel file
+        filename = exporter.export_monthly_expenses(user_id)
+        
+        # Send file to user
+        with open(filename, 'rb') as excel_file:
+            await update.message.reply_document(
+                document=excel_file,
+                caption=f"📊 **Monthly Expense Report**\n\nGenerated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\nPeriod: Last 30 days\n\nSheets included:\n• Summary by Category\n• Detailed Transactions",
+                parse_mode='Markdown'
+            )
+        
+        # Clean up
+        if os.path.exists(filename):
+            os.remove(filename)
+        
+        await update.message.reply_text("✅ Monthly report exported successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating report: {str(e)}")
+
+async def export_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export weekly expenses to Excel file"""
+    user_id = update.effective_user.id
+    
+    await update.message.reply_text("📊 Generating weekly expense report...", parse_mode='Markdown')
+    
+    try:
+        # Generate Excel file
+        filename = exporter.export_custom_period(user_id, days=7)
+        
+        # Send file to user
+        with open(filename, 'rb') as excel_file:
+            await update.message.reply_document(
+                document=excel_file,
+                caption=f"📊 **Weekly Expense Report**\n\nGenerated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}\n\nPeriod: Last 7 days",
+                parse_mode='Markdown'
+            )
+        
+        # Clean up
+        if os.path.exists(filename):
+            os.remove(filename)
+        
+        await update.message.reply_text("✅ Weekly report exported successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating report: {str(e)}")
+
+async def export_today_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export today's expenses to Excel file"""
+    user_id = update.effective_user.id
+    
+    await update.message.reply_text("📊 Generating today's expense report...", parse_mode='Markdown')
+    
+    try:
+        # Generate Excel file
+        filename = exporter.export_custom_period(user_id, days=1)
+        
+        # Send file to user
+        with open(filename, 'rb') as excel_file:
+            await update.message.reply_document(
+                document=excel_file,
+                caption=f"📊 **Today's Expense Report**\n\nGenerated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}",
+                parse_mode='Markdown'
+            )
+        
+        # Clean up
+        if os.path.exists(filename):
+            os.remove(filename)
+        
+        await update.message.reply_text("✅ Today's report exported successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating report: {str(e)}")
