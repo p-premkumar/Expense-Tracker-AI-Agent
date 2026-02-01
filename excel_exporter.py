@@ -4,6 +4,7 @@ Exports expenses to .xlsx format with formatting, summaries, and charts
 """
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -19,6 +20,17 @@ class ExcelExporter:
             top=Side(style='thin'),
             bottom=Side(style='thin')
         )
+
+        # timezones
+        self._utc = ZoneInfo("UTC")
+        self._ist = ZoneInfo("Asia/Kolkata")
+
+    def _parse_to_ist(self, date_str):
+        """Parse ISO datetime string (assumed UTC if naive) and convert to IST."""
+        date_obj = datetime.fromisoformat(date_str)
+        if date_obj.tzinfo is None:
+            date_obj = date_obj.replace(tzinfo=self._utc)
+        return date_obj.astimezone(self._ist)
     
     def export_all_expenses(self, user_id, filename=None):
         """Export all user expenses to Excel"""
@@ -45,7 +57,7 @@ class ExcelExporter:
         # Use sequential Excel IDs (1..N) so numbering restarts after deletions
         for seq, (exp_id, amount, category, description, date) in enumerate(expenses, start=1):
             row_idx = seq + 1
-            date_obj = datetime.fromisoformat(date)
+            date_obj = self._parse_to_ist(date)
             ws[f'A{row_idx}'] = seq
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
@@ -293,7 +305,7 @@ class ExcelExporter:
         # Group by month
         monthly_data = {}
         for _, amount, category, _, date in expenses:
-            date_obj = datetime.fromisoformat(date)
+            date_obj = self._parse_to_ist(date)
             month_key = date_obj.strftime("%Y-%m")
             if month_key not in monthly_data:
                 monthly_data[month_key] = 0
@@ -329,7 +341,7 @@ class ExcelExporter:
         
         # Data
         for row_idx, (_, amount, category, description, date) in enumerate(expenses, start=2):
-            date_obj = datetime.fromisoformat(date)
+            date_obj = self._parse_to_ist(date)
             ws[f'A{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'B{row_idx}'] = category
             ws[f'C{row_idx}'] = amount
