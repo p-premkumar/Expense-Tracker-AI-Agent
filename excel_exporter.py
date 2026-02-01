@@ -42,9 +42,11 @@ class ExcelExporter:
         self._add_headers(ws, headers)
         
         # Data
-        for row_idx, (exp_id, amount, category, description, date) in enumerate(expenses, start=2):
+        # Use sequential Excel IDs (1..N) so numbering restarts after deletions
+        for seq, (exp_id, amount, category, description, date) in enumerate(expenses, start=1):
+            row_idx = seq + 1
             date_obj = datetime.fromisoformat(date)
-            ws[f'A{row_idx}'] = exp_id
+            ws[f'A{row_idx}'] = seq
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount

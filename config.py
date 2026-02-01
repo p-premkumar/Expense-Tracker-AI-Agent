@@ -43,7 +43,7 @@ EXPENSE_PATTERNS = {
     "health": ["medicine", "doctor", "hospital", "health"],
     "education": ["course", "book", "education", "training", "tuition"],
     "travel": ["hotel", "flight", "vacation", "trip", "stay"],
-    "work": ["office", "work", "project", "meeting"],
+    "work": ["office", "work", "project","meeting"],
     "meat": ["meat", "chicken", "fish", "beef", "pork", "mutton", "lamb", "steak"],
     "vegetables": ["vegetables", "veggies", "broccoli", "carrot", "spinach", "tomato", "onion", "potato", "cabbage"],
     "fruits": ["fruits", "apple", "banana", "orange", "mango", "grapes", "strawberry", "watermelon", "pineapple"],
