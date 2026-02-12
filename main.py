@@ -188,7 +188,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle photo uploads for receipt processing"""
+    """Handle photo uploads for receipt processing - simple extraction"""
     
     if not update.message.photo:
         return
@@ -204,41 +204,140 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Download file
         await file.download_to_drive("temp_receipt.jpg")
         
-        # Process with OCR
-        from nlp_processor import OCRProcessor
-        ocr = OCRProcessor()
-        result = ocr.parse_receipt("temp_receipt.jpg")
+        # Extract text from image using OCR
+        ocr_text = None
         
-        if not result or not result['amount']:
+        # Try configured method first
+        try:
+            from ocr_config import get_ocr_processor
+            ocr = get_ocr_processor()
+            if ocr:
+                result = ocr.parse_receipt("temp_receipt.jpg")
+                ocr_text = result.get('text') if result else None
+        except Exception as e:
+            logger.warning(f"⚠️ Configured OCR failed: {e}")
+        
+        # Fallback to EasyOCR
+        if not ocr_text:
+            try:
+                from nlp_processor_alternative import EasyOCRProcessor
+                ocr = EasyOCRProcessor()
+                result = ocr.parse_receipt("temp_receipt.jpg")
+                ocr_text = result.get('text') if result else None
+                if ocr_text:
+                    logger.info("✓ EasyOCR successful")
+            except Exception as e:
+                logger.warning(f"⚠️ EasyOCR failed: {e}")
+        
+        # Fallback to Tesseract
+        if not ocr_text:
+            try:
+                from nlp_processor import OCRProcessor
+                ocr = OCRProcessor()
+                result = ocr.parse_receipt("temp_receipt.jpg")
+                ocr_text = result.get('text') if result else None
+                if ocr_text:
+                    logger.info("✓ Tesseract successful")
+            except Exception as e:
+                logger.warning(f"⚠️ Tesseract failed: {e}")
+        
+        # If no OCR text extracted
+        if not ocr_text:
             await update.message.reply_text(
-                "⚠️ Couldn't extract expense data from receipt.\n"
-                "Please try uploading a clearer image or manually type the amount."
+                "⚠️ Could not extract text from image.\n\n"
+                "Try:\n"
+                "• Upload a clearer image\n"
+                "• Ensure good lighting\n"
+                "• Or manually type: 'Spent 500 for food'"
             )
             return
         
-        # Store expense
+        # --- Advanced analysis: multi-item receipt with categories ---
+        analysis = parser.analyze_receipt(ocr_text)
+        items = analysis.get("items") or []
+
+        saved_count = 0
+        total_items_amount = 0.0
+        food_total = 0.0
+
+        for item in items:
+            amount = item.get("total_price")
+            category = item.get("category")
+            name = (item.get("name") or "").strip() or "Receipt item"
+
+            # Fallback category if missing
+            if not category:
+                category = parser._extract_category(name.lower())
+
+            if parser.is_valid_expense(amount, category):
+                db.add_expense(
+                    user.id,
+                    amount,
+                    category,
+                    f"Receipt - {name}",
+                    source="image",
+                )
+                saved_count += 1
+                total_items_amount += amount
+                if category == "Food":
+                    food_total += amount
+
+        if saved_count > 0:
+            lines = [
+                "✅ **Receipt Processed!**",
+                "",
+                f"Items saved: {saved_count}",
+                f"Total (items sum): {CURRENCY}{total_items_amount:.2f}",
+                "Source: image receipt",
+            ]
+            if food_total > 0:
+                lines.append(f"Food total: {CURRENCY}{food_total:.2f}")
+            if analysis.get("final_amount"):
+                lines.append(f"Bill total (receipt): {CURRENCY}{analysis['final_amount']:.2f}")
+            lines.append("")
+            lines.append("Use /summary or /export_monthly to see this in Excel.")
+
+            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            return
+
+        # --- Fallback: simple extraction (single total + category) ---
+        simple_result = parser.extract_simple_receipt(ocr_text)
+        
+        final_amount = simple_result.get('final_amount')
+        category = simple_result.get('category')
+        
+        if not final_amount:
+            await update.message.reply_text(
+                "❌ Could not find total amount in receipt.\n\n"
+                "Please manually enter: 'Spent [amount] for [category]'\n"
+                "Example: 'Spent 500 for food'"
+            )
+            return
+        
+        # Store the expense as a single entry
         db.add_expense(
             user.id,
-            result['amount'],
-            result['category'],
-            result['text'][:100],
-            source="receipt"
+            final_amount,
+            category,
+            f"Receipt - Amount: {final_amount}",
+            source="image"
         )
         
+        # Confirmation message
         confirmation = (
             f"✅ **Receipt Processed!**\n\n"
-            f"💰 Amount: {CURRENCY}{result['amount']:.2f}\n"
-            f"🏷️ Category: {result['category']}\n"
-            f"📸 Source: Receipt\n\n"
-            f"Use /summary to track your spending!"
+            f"💰 Amount: {CURRENCY}{final_amount:.2f}\n"
+            f"🏷️ Category: {category}\n"
+            f"📷 Source: image receipt\n\n"
+            f"Use /summary to see your expenses!"
         )
         
         await update.message.reply_text(confirmation, parse_mode='Markdown')
         
     except Exception as e:
-        logger.error(f"Error processing receipt: {str(e)}")
+        logger.error(f"❌ Error processing receipt: {str(e)}")
         await update.message.reply_text(
-            f"❌ Error processing receipt: {str(e)}\n"
+            f"Error processing receipt: {str(e)}\n"
             f"Please try again or manually enter the amount."
         )
     
@@ -272,10 +371,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         voice_processor = VoiceProcessor()
         text = voice_processor.transcribe_voice("temp_voice.ogg")
         
-        if not text or text.lower() == "error":
+        if not text:
             await update.message.reply_text(
-                "⚠️ Couldn't process voice message.\n"
-                "Please try speaking clearly or manually type the expense."
+                "Couldn't process voice message.\n\n"
+                "1) **OGG conversion needs ffmpeg** – install and add to PATH:\n"
+                "   https://ffmpeg.org (or: choco install ffmpeg)\n\n"
+                "2) Internet required for Google Speech API.\n"
+                "3) Speak clearly; or type: 'Spent 150 for food'"
             )
             return
         
@@ -345,16 +447,44 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Download file
         await file.download_to_drive("temp_payment.jpg")
         
-        # Extract text from screenshot
-        from nlp_processor import OCRProcessor
-        ocr = OCRProcessor()
-        result = ocr.parse_receipt("temp_payment.jpg")
+        # Extract text from screenshot - try configured method first, fallback to others
+        result = None
+        
+        # Try configured method first
+        try:
+            from ocr_config import get_ocr_processor
+            ocr = get_ocr_processor()
+            if ocr:
+                result = ocr.parse_receipt("temp_payment.jpg")
+        except Exception as e:
+            logger.warning(f"⚠️ Configured OCR failed, trying fallback: {e}")
+        
+        # Fallback to EasyOCR if configured method failed
+        if not result or not result.get('amount'):
+            try:
+                from nlp_processor_alternative import EasyOCRProcessor
+                ocr = EasyOCRProcessor()
+                result = ocr.parse_receipt("temp_payment.jpg")
+                logger.info("✓ EasyOCR fallback successful")
+            except Exception as e:
+                logger.warning(f"⚠️ EasyOCR fallback failed: {e}")
+        
+        # Final fallback to original Tesseract
+        if not result or not result.get('amount'):
+            try:
+                from nlp_processor import OCRProcessor
+                ocr = OCRProcessor()
+                result = ocr.parse_receipt("temp_payment.jpg")
+                logger.info("✓ Tesseract fallback successful")
+            except Exception as e:
+                logger.warning(f"⚠️ Tesseract fallback failed: {e}")
         
         if not result or not result['amount']:
             await update.message.reply_text(
                 "⚠️ Couldn't extract payment details.\n\n"
                 "Please reply with transaction details in format:\n"
-                "`TXID: ABC123\nAccount: MyBank\nAmount: 500`"
+                "`TXID: ABC123\nAccount: MyBank\nAmount: 500`\n\n"
+                "Or upload a clearer screenshot."
             )
             return
         
@@ -403,7 +533,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"Error processing payment screenshot: {str(e)}")
         await update.message.reply_text(
             f"❌ Error processing screenshot: {str(e)}\n"
-            f"Please try again with a clearer image."
+            f"Please try again with a clearer image or manually enter the details."
         )
     
     # Clean up

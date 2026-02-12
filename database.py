@@ -104,7 +104,7 @@ class ExpenseDatabase:
         
         if days:
             query = '''
-                SELECT id, amount, category, description, date
+                SELECT id, amount, category, description, date, source
                 FROM expenses
                 WHERE user_id = ? AND date >= datetime('now', '-' || ? || ' days')
                 ORDER BY date DESC
@@ -112,7 +112,7 @@ class ExpenseDatabase:
             cursor.execute(query, (user_id, days))
         else:
             query = '''
-                SELECT id, amount, category, description, date
+                SELECT id, amount, category, description, date, source
                 FROM expenses
                 WHERE user_id = ?
                 ORDER BY date DESC

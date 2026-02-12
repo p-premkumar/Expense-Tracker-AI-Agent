@@ -55,7 +55,7 @@ class ExcelExporter:
         
         # Data
         # Use sequential Excel IDs (1..N) so numbering restarts after deletions
-        for seq, (exp_id, amount, category, description, date) in enumerate(expenses, start=1):
+        for seq, (exp_id, amount, category, description, date, source) in enumerate(expenses, start=1):
             row_idx = seq + 1
             date_obj = self._parse_to_ist(date)
             ws[f'A{row_idx}'] = seq
@@ -63,7 +63,7 @@ class ExcelExporter:
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount
             ws[f'E{row_idx}'] = description
-            ws[f'F{row_idx}'] = "Text"
+            ws[f'F{row_idx}'] = source if source else "text"
             
             # Format currency column
             ws[f'D{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
@@ -304,7 +304,7 @@ class ExcelExporter:
         
         # Group by month
         monthly_data = {}
-        for _, amount, category, _, date in expenses:
+        for _, amount, category, _, date, _ in expenses:
             date_obj = self._parse_to_ist(date)
             month_key = date_obj.strftime("%Y-%m")
             if month_key not in monthly_data:
@@ -340,7 +340,7 @@ class ExcelExporter:
             cell.border = self.thin_border
         
         # Data
-        for row_idx, (_, amount, category, description, date) in enumerate(expenses, start=2):
+        for row_idx, (_, amount, category, description, date, source) in enumerate(expenses, start=2):
             date_obj = self._parse_to_ist(date)
             ws[f'A{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'B{row_idx}'] = category

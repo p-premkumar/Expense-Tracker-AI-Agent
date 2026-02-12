@@ -35,7 +35,7 @@ CURRENCY = "₹"
 
 # Text patterns for expense detection
 EXPENSE_PATTERNS = {
-    "food": ["food", "eat", "lunch", "breakfast", "dinner", "biriyani", "pizza", "burger"],
+    "food": ["food", "eat", "lunch", "breakfast", "dinner", "biryani", "biriyani", "pizza", "burger"],
     "transport": ["transport", "travel", "taxi", "bus", "metro", "fuel", "petrol"],
     "entertainment": ["movie", "game", "show", "concert", "play", "entertainment"],
     "shopping": ["shop", "buy", "clothes", "shoe", "gift","shirt"],
