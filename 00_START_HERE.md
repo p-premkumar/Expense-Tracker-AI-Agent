@@ -358,4 +358,4 @@ Your **Expense Tracker AI Agent** is complete and ready to use!
 **Version:** 1.0.0
 **Status:** ✅ Production Ready
 **Created:** January 25, 2026
-**Bot Token:** 8140750596:AAEaSEXVus7m1_3iVhQ7BXDtA4uu-YEzyno
+**Bot Token:* 
