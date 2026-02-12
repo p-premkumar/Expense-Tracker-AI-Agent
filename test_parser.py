@@ -13,7 +13,7 @@ def test_expense_parser():
     parser = ExpenseParser()
     
     print("=" * 60)
-    print("🧪 Testing Expense Parser")
+    print("Testing Expense Parser")
     print("=" * 60)
     print()
     
@@ -38,13 +38,13 @@ def test_expense_parser():
         amount, category, description = parser.parse_expense(text)
         
         if amount:
-            status = "✅"
+            status = "OK"
             print(f"{status} Input: \"{text}\"")
-            print(f"   → Amount: {CURRENCY}{amount:.2f}")
-            print(f"   → Category: {category}")
+            print(f"   Amount: Rs {amount:.2f}")
+            print(f"   Category: {category}")
             print()
         else:
-            status = "❌"
+            status = "FAIL"
             print(f"{status} Could not parse: \"{text}\"")
             print()
 
@@ -52,7 +52,7 @@ def test_database_operations():
     """Test database operations"""
     
     print("\n" + "=" * 60)
-    print("📊 Testing Database Operations")
+    print("Testing Database Operations")
     print("=" * 60)
     print()
     
@@ -60,12 +60,12 @@ def test_database_operations():
     test_user_id = 123456789
     
     # Add sample user
-    print("1️⃣ Adding sample user...")
+    print("Step 1: Adding sample user...")
     db.add_user(test_user_id, "test_user", "Test")
-    print("✅ User added\n")
+    print("User added\n")
     
     # Add sample expenses
-    print("2️⃣ Adding sample expenses...")
+    print("Step 2: Adding sample expenses...")
     
     sample_expenses = [
         (500, "Food", "Breakfast at cafe"),
@@ -77,37 +77,37 @@ def test_database_operations():
     
     for amount, category, description in sample_expenses:
         db.add_expense(test_user_id, amount, category, description)
-        print(f"✅ Added {CURRENCY}{amount:.2f} - {category}")
+        print(f"Added Rs {amount:.2f} - {category}")
     
     print()
     
     # Get expenses
-    print("3️⃣ Retrieving expenses...")
+    print("Step 3: Retrieving expenses...")
     expenses = db.get_expenses(test_user_id, days=30)
-    print(f"✅ Found {len(expenses)} expenses\n")
+    print(f"Found {len(expenses)} expenses\n")
     
     for exp_id, amount, category, description, date in expenses:
-        print(f"   • {category}: {CURRENCY}{amount:.2f}")
+        print(f"   - {category}: Rs {amount:.2f}")
     
     print()
     
     # Get summary
-    print("4️⃣ Getting summary by category...")
+    print("Step 4: Getting summary by category...")
     summary = db.get_summary(test_user_id, days=30)
     
     total = 0
     for category, amount, count in summary:
-        print(f"   • {category}: {CURRENCY}{amount:.2f} ({count} items)")
+        print(f"   - {category}: Rs {amount:.2f} ({count} items)")
         total += amount
     
-    print(f"\n   Total: {CURRENCY}{total:.2f}")
+    print(f"\n   Total: Rs {total:.2f}")
     
     print()
     
     # Get today's total
-    print("5️⃣ Today's total...")
+    print("Step 5: Today's total...")
     today_total = db.get_total_today(test_user_id)
-    print(f"✅ Today's spending: {CURRENCY}{today_total:.2f}")
+    print(f"Today's spending: Rs {today_total:.2f}")
     
     print()
 
@@ -117,12 +117,12 @@ def show_category_examples():
     from config import EXPENSE_PATTERNS
     
     print("\n" + "=" * 60)
-    print("📂 Category Examples")
+    print("Category Examples")
     print("=" * 60)
     print()
     
     for category, keywords in EXPENSE_PATTERNS.items():
-        print(f"🏷️ {category.upper()}")
+        print(f"{category.upper()}")
         print(f"   Keywords: {', '.join(keywords)}")
         print()
 
@@ -130,19 +130,19 @@ def main():
     """Run all tests"""
     
     print("\n")
-    print("╔" + "=" * 58 + "╗")
-    print("║" + " 💰 Expense Tracker AI - Testing Suite ".center(58) + "║")
-    print("╚" + "=" * 58 + "╝")
+    print("=" * 60)
+    print("Expense Tracker AI - Testing Suite".center(60))
+    print("=" * 60)
     
     # Run tests
     test_expense_parser()
     show_category_examples()
     
     print("\n" + "=" * 60)
-    print("✅ All tests completed!")
+    print("All tests completed!")
     print("=" * 60)
     
-    print("\n💡 Next steps:")
+    print("\nNext steps:")
     print("1. Review the test output above")
     print("2. Start the bot: python main.py")
     print("3. Test in Telegram: just send messages to the bot")
