@@ -1,16 +1,20 @@
 """
-OCR Method Configuration
-Switch between different OCR methods easily
+OCR method configuration and loader.
 """
+
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 # Available OCR methods:
 # - "tesseract": Original Tesseract-OCR (system software required)
-# - "easyocr": EasyOCR (pip installable, no system dependencies)
-# - "paddleocr": PaddleOCR (fastest, very lightweight)
+# - "easyocr": EasyOCR (pip installable, heavier first initialization)
+# - "paddleocr": PaddleOCR
+#
+# Default is tesseract to avoid heavy model initialization stalls on startup.
+CURRENT_OCR_METHOD = os.getenv("OCR_METHOD", "tesseract").strip().lower()
 
-CURRENT_OCR_METHOD = "easyocr"  # ← Change this to switch methods
-
-# Method details
 OCR_METHODS = {
     "tesseract": {
         "class": "OCRProcessor",
@@ -23,8 +27,8 @@ OCR_METHODS = {
     },
     "easyocr": {
         "class": "EasyOCRProcessor",
-        "module": "nlp_processor_alternative",
-        "description": "EasyOCR (RECOMMENDED)",
+        "module": "nlp_processor",
+        "description": "EasyOCR",
         "requires_system_software": False,
         "pip_installable": True,
         "speed": "Fast",
@@ -32,8 +36,8 @@ OCR_METHODS = {
     },
     "paddleocr": {
         "class": "PaddleOCRProcessor",
-        "module": "nlp_processor_alternative",
-        "description": "PaddleOCR (FASTEST)",
+        "module": "nlp_processor",
+        "description": "PaddleOCR",
         "requires_system_software": False,
         "pip_installable": True,
         "speed": "Very Fast",
@@ -41,91 +45,90 @@ OCR_METHODS = {
     },
 }
 
+_PROCESSOR_CACHE = {}
+
+
+def _build_method_order():
+    """Build a safe method fallback order."""
+    selected = CURRENT_OCR_METHOD if CURRENT_OCR_METHOD in OCR_METHODS else "tesseract"
+    if selected != CURRENT_OCR_METHOD:
+        logger.warning(
+            "Unknown OCR method '%s'. Falling back to '%s'.",
+            CURRENT_OCR_METHOD,
+            selected,
+        )
+
+    order = [selected]
+    for fallback in ("tesseract", "easyocr", "paddleocr"):
+        if fallback not in order:
+            order.append(fallback)
+    return order
+
+
+def _load_processor(method_name):
+    """Instantiate a processor for one method."""
+    method_config = OCR_METHODS[method_name]
+    module = __import__(method_config["module"], fromlist=[method_config["class"]])
+    processor_class = getattr(module, method_config["class"])
+    return processor_class()
+
 
 def get_ocr_processor():
     """
-    Dynamically load the configured OCR processor
+    Dynamically load OCR processor with caching and fallbacks.
     Usage: processor = get_ocr_processor()
     """
-    if CURRENT_OCR_METHOD not in OCR_METHODS:
-        raise ValueError(f"Unknown OCR method: {CURRENT_OCR_METHOD}")
-    
-    method_config = OCR_METHODS[CURRENT_OCR_METHOD]
-    
-    try:
-        # Import the module and get the class
-        module = __import__(method_config["module"], fromlist=[method_config["class"]])
-        processor_class = getattr(module, method_config["class"])
-        
-        # Instantiate and return
-        processor = processor_class()
-        return processor
-    
-    except ImportError as e:
-        print(f"❌ Failed to import {method_config['class']} from {method_config['module']}")
-        print(f"   Error: {e}")
-        print(f"   Install with: pip install {CURRENT_OCR_METHOD}")
-        return None
-    
-    except Exception as e:
-        print(f"❌ Failed to initialize OCR processor: {e}")
-        return None
+    for method_name in _build_method_order():
+        if method_name in _PROCESSOR_CACHE:
+            return _PROCESSOR_CACHE[method_name]
+
+        try:
+            processor = _load_processor(method_name)
+            _PROCESSOR_CACHE[method_name] = processor
+            logger.info("Using OCR method: %s", method_name)
+            return processor
+        except ImportError as import_error:
+            logger.warning(
+                "OCR method '%s' import failed: %s",
+                method_name,
+                import_error,
+            )
+        except Exception as init_error:
+            logger.warning(
+                "OCR method '%s' initialization failed: %s",
+                method_name,
+                init_error,
+            )
+
+    logger.error("No OCR processor could be initialized")
+    return None
 
 
-# Helper function to check method availability
 def check_method_available(method_name):
-    """Check if a specific OCR method is available"""
+    """Check if a specific OCR method is available."""
     if method_name not in OCR_METHODS:
         return False
-    
-    method_config = OCR_METHODS[method_name]
-    
+
     try:
-        # Try to import
+        method_config = OCR_METHODS[method_name]
         module = __import__(method_config["module"], fromlist=[method_config["class"]])
         getattr(module, method_config["class"])
         return True
-    except:
+    except Exception:
         return False
 
 
-# Get list of available methods
 def get_available_methods():
-    """Return list of available OCR methods"""
+    """Return list of available OCR methods."""
     available = []
-    for method_name in OCR_METHODS.keys():
+    for method_name in OCR_METHODS:
         if check_method_available(method_name):
-            available.append({
-                "name": method_name,
-                "description": OCR_METHODS[method_name]["description"],
-                "speed": OCR_METHODS[method_name]["speed"],
-                "accuracy": OCR_METHODS[method_name]["accuracy"],
-            })
+            available.append(
+                {
+                    "name": method_name,
+                    "description": OCR_METHODS[method_name]["description"],
+                    "speed": OCR_METHODS[method_name]["speed"],
+                    "accuracy": OCR_METHODS[method_name]["accuracy"],
+                }
+            )
     return available
-
-
-if __name__ == "__main__":
-    # Test the configuration
-    print("="*70)
-    print("OCR METHOD CONFIGURATION TEST")
-    print("="*70 + "\n")
-    
-    print(f"Current OCR Method: {CURRENT_OCR_METHOD}")
-    print(f"Description: {OCR_METHODS[CURRENT_OCR_METHOD]['description']}\n")
-    
-    available = get_available_methods()
-    print(f"Available Methods: {len(available)}\n")
-    
-    for method in available:
-        status = "✓" if method['name'] == CURRENT_OCR_METHOD else " "
-        print(f"  {status} {method['name']:12} - {method['description']:25} (Speed: {method['speed']})")
-    
-    print("\n" + "="*70)
-    print(f"Attempting to load: {CURRENT_OCR_METHOD}...")
-    print("="*70 + "\n")
-    
-    processor = get_ocr_processor()
-    if processor:
-        print(f"✓ Successfully loaded {CURRENT_OCR_METHOD} OCR processor!")
-    else:
-        print(f"❌ Failed to load {CURRENT_OCR_METHOD} OCR processor")

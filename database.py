@@ -6,6 +6,13 @@ from datetime import datetime
 from config import DATABASE_PATH, EXPENSE_CATEGORIES
 
 class ExpenseDatabase:
+    BILL_META_DESCRIPTIONS = (
+        "bill subtotal",
+        "bill total",
+        "bill grand total",
+        "bill amount",
+    )
+
     def __init__(self):
         self.db_path = DATABASE_PATH
         self.init_db()
@@ -101,23 +108,27 @@ class ExpenseDatabase:
         """Get expenses for a user"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
         
         if days:
             query = '''
                 SELECT id, amount, category, description, date, source
                 FROM expenses
-                WHERE user_id = ? AND date >= datetime('now', '-' || ? || ' days')
+                WHERE user_id = ?
+                  AND date >= datetime('now', '-' || ? || ' days')
+                  AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
                 ORDER BY date DESC
             '''
-            cursor.execute(query, (user_id, days))
+            cursor.execute(query, (user_id, days, *excluded))
         else:
             query = '''
                 SELECT id, amount, category, description, date, source
                 FROM expenses
                 WHERE user_id = ?
+                  AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
                 ORDER BY date DESC
             '''
-            cursor.execute(query, (user_id,))
+            cursor.execute(query, (user_id, *excluded))
         
         expenses = cursor.fetchall()
         conn.close()
@@ -127,15 +138,18 @@ class ExpenseDatabase:
         """Get expense summary by category"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
         
         query = '''
             SELECT category, SUM(amount) as total, COUNT(*) as count
             FROM expenses
-            WHERE user_id = ? AND date >= datetime('now', '-' || ? || ' days')
+            WHERE user_id = ?
+              AND date >= datetime('now', '-' || ? || ' days')
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
             GROUP BY category
             ORDER BY total DESC
         '''
-        cursor.execute(query, (user_id, days))
+        cursor.execute(query, (user_id, days, *excluded))
         summary = cursor.fetchall()
         conn.close()
         return summary
@@ -153,13 +167,16 @@ class ExpenseDatabase:
         """Get total expenses for today"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
         
         query = '''
             SELECT SUM(amount) as total
             FROM expenses
-            WHERE user_id = ? AND date >= datetime('now', 'start of day')
+            WHERE user_id = ?
+              AND date >= datetime('now', 'start of day')
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
         '''
-        cursor.execute(query, (user_id,))
+        cursor.execute(query, (user_id, *excluded))
         result = cursor.fetchone()
         conn.close()
         
@@ -204,13 +221,16 @@ class ExpenseDatabase:
         """Get total expenses for current week"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
         
         query = '''
             SELECT SUM(amount) as total
             FROM expenses
-            WHERE user_id = ? AND date >= datetime('now', '-7 days')
+            WHERE user_id = ?
+              AND date >= datetime('now', '-7 days')
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
         '''
-        cursor.execute(query, (user_id,))
+        cursor.execute(query, (user_id, *excluded))
         result = cursor.fetchone()
         conn.close()
         
@@ -220,13 +240,16 @@ class ExpenseDatabase:
         """Get total expenses for current month"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
         
         query = '''
             SELECT SUM(amount) as total
             FROM expenses
-            WHERE user_id = ? AND date >= datetime('now', '-30 days')
+            WHERE user_id = ?
+              AND date >= datetime('now', '-30 days')
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
         '''
-        cursor.execute(query, (user_id,))
+        cursor.execute(query, (user_id, *excluded))
         result = cursor.fetchone()
         conn.close()
         

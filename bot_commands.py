@@ -68,12 +68,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 *EXPORT DATA:*
 /export - Excel export (all expenses)
-/export_today - Excel export (today)
-/export_weekly - Excel export (last 7 days)
-/export_monthly - Excel export (last 30 days)
-/export_csv - CSV format export
-/pdf - PDF export (coming soon)
-/graph - Graph visualization (coming soon)
+/exporttoday or /export_today - Excel export (today)
+/exportweekly or /export_weekly - Excel export (last 7 days)
+/exportmonthly or /export_monthly - Excel export (last 30 days)
+/exportcsv or /export_csv - CSV format export
+/pdf - PDF export (last 30 days)
+/graph - Graph visualization (last 30 days)
 
 *MANAGE DATA:*
 /categories - Show all categories
@@ -159,7 +159,7 @@ async def list_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     
     list_text = "📝 **Last 10 Expenses:**\n\n"
-    for idx, (exp_id, amount, category, description, date) in enumerate(expenses, 1):
+    for idx, (exp_id, amount, category, description, date, _) in enumerate(expenses, 1):
         date_obj = datetime.fromisoformat(date)
         date_str = date_obj.strftime("%d-%m-%Y %H:%M")
         list_text += f"{idx}. {category} - {CURRENCY}{amount:.2f} ({date_str})\n"
@@ -493,9 +493,142 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("✅ CSV exported successfully!")
 
 async def export_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder for PDF export"""
-    await update.message.reply_text("📄 PDF export coming soon! Use /export_monthly for Excel format.")
+    """Export expenses to a PDF report (last 30 days)."""
+    user_id = update.effective_user.id
+    expenses = db.get_expenses(user_id, days=30)
+
+    if not expenses:
+        await update.message.reply_text("No expenses found for the last 30 days.")
+        return
+
+    await update.message.reply_text("📄 Generating PDF report...", parse_mode='Markdown')
+
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+    except ImportError:
+        await update.message.reply_text(
+            "❌ PDF support is not installed.\nInstall dependency: `pip install reportlab`",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        filename = f"expenses_pdf_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        doc = SimpleDocTemplate(filename, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        total_amount = sum(float(row[1] or 0) for row in expenses)
+        generated_on = datetime.now().strftime("%d-%m-%Y %H:%M")
+
+        elements.append(Paragraph("Expense Report (Last 30 Days)", styles["Title"]))
+        elements.append(Paragraph(f"Generated on: {generated_on}", styles["Normal"]))
+        elements.append(Paragraph(f"Total Expenses: {len(expenses)}", styles["Normal"]))
+        elements.append(Paragraph(f"Total Amount: {CURRENCY}{total_amount:.2f}", styles["Normal"]))
+        elements.append(Spacer(1, 8))
+
+        table_data = [["Date", "Category", "Amount", "Description"]]
+        for _, amount, category, description, date, *_ in expenses[:200]:
+            date_val = (date or "")[:16]
+            category_val = category or "Other"
+            amount_val = f"{CURRENCY}{float(amount):.2f}"
+            desc_val = (description or "").replace("\n", " ").strip()
+            if len(desc_val) > 55:
+                desc_val = desc_val[:52] + "..."
+            table_data.append([date_val, category_val, amount_val, desc_val])
+
+        table = Table(table_data, colWidths=[36 * mm, 30 * mm, 26 * mm, 86 * mm], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1d5db")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
+        ]))
+        elements.append(table)
+
+        if len(expenses) > 200:
+            elements.append(Spacer(1, 6))
+            elements.append(Paragraph(f"Note: Showing first 200 rows out of {len(expenses)} expenses.", styles["Italic"]))
+
+        doc.build(elements)
+
+        with open(filename, "rb") as pdf_file:
+            await update.message.reply_document(
+                document=pdf_file,
+                caption=f"📄 **PDF Expense Report**\n\nPeriod: Last 30 days\nTotal: {CURRENCY}{total_amount:.2f}",
+                filename=filename,
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating PDF report: {str(e)}")
+        return
+    finally:
+        if 'filename' in locals() and os.path.exists(filename):
+            os.remove(filename)
 
 async def export_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder for graph export"""
-    await update.message.reply_text("📈 Graph export coming soon! Use /stats to see text-based statistics.")
+    """Export category-wise spending graph image (last 30 days)."""
+    user_id = update.effective_user.id
+    summary_data = db.get_summary(user_id, 30)
+
+    if not summary_data:
+        await update.message.reply_text("No expenses found for the last 30 days.")
+        return
+
+    await update.message.reply_text("📈 Generating spending graph...", parse_mode='Markdown')
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        await update.message.reply_text(
+            "❌ Graph support is not installed.\nInstall dependency: `pip install matplotlib`",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        categories = [row[0] for row in summary_data]
+        amounts = [float(row[1] or 0) for row in summary_data]
+        total_amount = sum(amounts)
+
+        filename = f"expense_graph_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+
+        fig, axes = plt.subplots(1, 2, figsize=(13, 5), dpi=120)
+        fig.suptitle("Expense Analysis - Last 30 Days", fontsize=14, fontweight="bold")
+
+        # Bar chart
+        axes[0].bar(categories, amounts, color="#2563eb")
+        axes[0].set_title("Category Totals")
+        axes[0].set_ylabel(f"Amount ({CURRENCY})")
+        axes[0].tick_params(axis='x', rotation=35)
+        axes[0].grid(axis='y', linestyle='--', alpha=0.35)
+
+        # Pie chart
+        axes[1].pie(amounts, labels=categories, autopct="%1.1f%%", startangle=140)
+        axes[1].set_title("Category Share")
+
+        plt.tight_layout()
+        plt.savefig(filename, bbox_inches="tight")
+        plt.close(fig)
+
+        with open(filename, "rb") as img_file:
+            await update.message.reply_photo(
+                photo=img_file,
+                caption=f"📈 **Spending Graph (Last 30 Days)**\n\nTotal: {CURRENCY}{total_amount:.2f}",
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error generating graph: {str(e)}")
+        return
+    finally:
+        if 'filename' in locals() and os.path.exists(filename):
+            os.remove(filename)

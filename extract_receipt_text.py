@@ -31,7 +31,7 @@ def get_ocr_text(image_path):
         pass
     if not text:
         try:
-            from nlp_processor_alternative import EasyOCRProcessor
+            from nlp_processor import EasyOCRProcessor
             ocr = EasyOCRProcessor()
             result = ocr.parse_receipt(image_path)
             text = result.get('text') if result else None

@@ -14,7 +14,7 @@ print("📥 This may take 30-60 seconds on first run (downloads ~200MB model)...
 
 try:
     print("1️⃣  Importing EasyOCR...", end=" ", flush=True)
-    from nlp_processor_alternative import EasyOCRProcessor
+    from nlp_processor import EasyOCRProcessor
     print("✅")
     
     print("2️⃣  Initializing OCR processor...", end=" ", flush=True)

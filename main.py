@@ -2,6 +2,7 @@
 Main Telegram Bot Handler for Expense Tracker
 """
 import logging
+import time
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -12,7 +13,7 @@ from telegram.ext import (
 )
 from telegram.error import TelegramError
 
-from config import BOT_TOKEN, CURRENCY
+from config import BOT_TOKEN, CURRENCY, GEMINI_API_KEY
 from database import ExpenseDatabase
 from nlp_processor import ExpenseParser
 from bot_commands import (
@@ -51,6 +52,13 @@ logger = logging.getLogger(__name__)
 # Initialize database and parser
 db = ExpenseDatabase()
 parser = ExpenseParser()
+gemini = None
+if GEMINI_API_KEY:
+    try:
+        from gemini_processor import GeminiProcessor
+        gemini = GeminiProcessor()
+    except Exception as gemini_error:
+        logger.warning("Gemini disabled due to initialization error: %s", gemini_error)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -188,159 +196,287 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle photo uploads for receipt processing - simple extraction"""
-    
+    """Handle photo uploads for receipt processing."""
+
     if not update.message.photo:
         return
-    
+
     user = update.effective_user
     db.add_user(user.id, user.username, user.first_name)
-    
-    # Get the file
-    photo = update.message.photo[-1]  # Get largest quality
+
+    photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
-    
+
     try:
-        # Download file
         await file.download_to_drive("temp_receipt.jpg")
-        
-        # Extract text from image using OCR
+
+        analysis = None
         ocr_text = None
-        
-        # Try configured method first
-        try:
-            from ocr_config import get_ocr_processor
-            ocr = get_ocr_processor()
-            if ocr:
-                result = ocr.parse_receipt("temp_receipt.jpg")
-                ocr_text = result.get('text') if result else None
-        except Exception as e:
-            logger.warning(f"⚠️ Configured OCR failed: {e}")
-        
-        # Fallback to EasyOCR
-        if not ocr_text:
+        gemini_issue = None
+
+        def _gemini_issue_note(issue):
+            if not isinstance(issue, dict):
+                return None
+
+            code = issue.get("code")
+            retry_after = issue.get("retry_after_seconds")
+
+            if code in ("quota_exceeded", "quota_cooldown"):
+                if retry_after:
+                    return f"Note: Gemini unavailable (quota/rate limit). OCR fallback used. Retry in ~{int(retry_after)}s."
+                return "Note: Gemini unavailable (quota/rate limit). OCR fallback used."
+            if code == "auth_or_permission_error":
+                return "Note: Gemini API key/permission issue detected. OCR fallback used."
+            if code == "not_initialized":
+                return "Note: Gemini not initialized. Check GEMINI_API_KEY and billing/quota."
+            if issue.get("error"):
+                return "Note: Gemini request failed. OCR fallback used."
+            return None
+
+        # Primary path: Gemini image analysis
+        if gemini:
+            gemini_result = gemini.analyze_receipt("temp_receipt.jpg")
+            if gemini_result and not gemini_result.get("error"):
+                analysis = gemini_result
+                logger.info("Gemini receipt analysis successful")
+            else:
+                gemini_issue = gemini_result if isinstance(gemini_result, dict) else {"error": str(gemini_result)}
+                retry_after = gemini_issue.get("retry_after_seconds") if isinstance(gemini_issue, dict) else None
+                if retry_after:
+                    logger.warning(
+                        "Gemini unavailable (quota/rate limit). OCR fallback active for %ss.",
+                        retry_after,
+                    )
+                else:
+                    logger.warning("Gemini failed, switching to OCR fallback.")
+                analysis = None
+
+        # Fallback path: OCR + parser analysis
+        if not analysis:
             try:
-                from nlp_processor_alternative import EasyOCRProcessor
-                ocr = EasyOCRProcessor()
-                result = ocr.parse_receipt("temp_receipt.jpg")
-                ocr_text = result.get('text') if result else None
-                if ocr_text:
-                    logger.info("✓ EasyOCR successful")
+                from ocr_config import get_ocr_processor
+                ocr = get_ocr_processor()
+                if ocr:
+                    result = ocr.parse_receipt("temp_receipt.jpg")
+                    ocr_text = result.get('text') if result else None
             except Exception as e:
-                logger.warning(f"⚠️ EasyOCR failed: {e}")
-        
-        # Fallback to Tesseract
-        if not ocr_text:
-            try:
-                from nlp_processor import OCRProcessor
-                ocr = OCRProcessor()
-                result = ocr.parse_receipt("temp_receipt.jpg")
-                ocr_text = result.get('text') if result else None
-                if ocr_text:
-                    logger.info("✓ Tesseract successful")
-            except Exception as e:
-                logger.warning(f"⚠️ Tesseract failed: {e}")
-        
-        # If no OCR text extracted
-        if not ocr_text:
+                logger.warning("Configured OCR failed: %s", e)
+
+            if not ocr_text:
+                try:
+                    from nlp_processor import OCRProcessor
+                    ocr = OCRProcessor()
+                    result = ocr.parse_receipt("temp_receipt.jpg")
+                    ocr_text = result.get('text') if result else None
+                    if ocr_text:
+                        logger.info("Tesseract successful")
+                except Exception as e:
+                    logger.warning("Tesseract failed: %s", e)
+
+            if not ocr_text:
+                try:
+                    from nlp_processor import EasyOCRProcessor
+                    ocr = EasyOCRProcessor()
+                    result = ocr.parse_receipt("temp_receipt.jpg")
+                    ocr_text = result.get('text') if result else None
+                    if ocr_text:
+                        logger.info("EasyOCR successful")
+                except Exception as e:
+                    logger.warning("EasyOCR failed: %s", e)
+
+            if ocr_text:
+                analysis = parser.analyze_receipt(ocr_text)
+
+        if not analysis and not ocr_text:
+            extra_hint = ""
+            issue_note = _gemini_issue_note(gemini_issue)
+            if issue_note:
+                extra_hint = f"\n\n{issue_note}"
             await update.message.reply_text(
-                "⚠️ Could not extract text from image.\n\n"
+                "Could not extract text from image.\n\n"
                 "Try:\n"
-                "• Upload a clearer image\n"
-                "• Ensure good lighting\n"
-                "• Or manually type: 'Spent 500 for food'"
+                "- Upload a clearer image\n"
+                "- Ensure good lighting\n"
+                "- Or type: 'Spent 500 for food'"
+                f"{extra_hint}"
             )
             return
-        
-        # --- Advanced analysis: multi-item receipt with categories ---
-        analysis = parser.analyze_receipt(ocr_text)
-        items = analysis.get("items") or []
 
-        saved_count = 0
-        total_items_amount = 0.0
-        food_total = 0.0
+        if not analysis:
+            analysis = {}
 
-        for item in items:
-            amount = item.get("total_price")
-            category = item.get("category")
-            name = (item.get("name") or "").strip() or "Receipt item"
+        def _safe_float(value):
+            try:
+                if value is None:
+                    return None
+                amount = float(value)
+                return amount if amount > 0 else None
+            except (TypeError, ValueError):
+                return None
 
-            # Fallback category if missing
-            if not category:
-                category = parser._extract_category(name.lower())
+        bill_totals = parser.extract_bill_totals(ocr_text) if ocr_text else {
+            "subtotal": None,
+            "total": None,
+            "grand_total": None,
+        }
 
-            if parser.is_valid_expense(amount, category):
-                db.add_expense(
-                    user.id,
-                    amount,
-                    category,
-                    f"Receipt - {name}",
-                    source="image",
-                )
-                saved_count += 1
-                total_items_amount += amount
-                if category == "Food":
-                    food_total += amount
+        subtotal = bill_totals.get("subtotal") or _safe_float(analysis.get("subtotal"))
+        total = bill_totals.get("total") or _safe_float(analysis.get("total"))
+        grand_total = bill_totals.get("grand_total") or _safe_float(analysis.get("grand_total"))
 
-        if saved_count > 0:
-            lines = [
-                "✅ **Receipt Processed!**",
-                "",
-                f"Items saved: {saved_count}",
-                f"Total (items sum): {CURRENCY}{total_items_amount:.2f}",
-                "Source: image receipt",
-            ]
-            if food_total > 0:
-                lines.append(f"Food total: {CURRENCY}{food_total:.2f}")
-            if analysis.get("final_amount"):
-                lines.append(f"Bill total (receipt): {CURRENCY}{analysis['final_amount']:.2f}")
-            lines.append("")
-            lines.append("Use /summary or /export_monthly to see this in Excel.")
+        amount_value = _safe_float(analysis.get("amount"))
+        if not amount_value and ocr_text:
+            parsed_amount, _, _ = parser.parse_expense(ocr_text)
+            amount_value = _safe_float(parsed_amount)
 
-            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-            return
+        chosen_amount = None
+        chosen_label = None
 
-        # --- Fallback: simple extraction (single total + category) ---
-        simple_result = parser.extract_simple_receipt(ocr_text)
-        
-        final_amount = simple_result.get('final_amount')
-        category = simple_result.get('category')
-        
-        if not final_amount:
+        if grand_total:
+            chosen_amount = grand_total
+            chosen_label = "Bill Grand Total"
+        elif total:
+            chosen_amount = total
+            chosen_label = "Bill Total"
+        elif subtotal:
+            chosen_amount = subtotal
+            chosen_label = "Bill Subtotal"
+        elif amount_value:
+            chosen_amount = amount_value
+            chosen_label = "Bill Amount"
+
+        if not chosen_amount:
             await update.message.reply_text(
-                "❌ Could not find total amount in receipt.\n\n"
+                "Could not find total amount in receipt.\n\n"
                 "Please manually enter: 'Spent [amount] for [category]'\n"
                 "Example: 'Spent 500 for food'"
             )
             return
-        
-        # Store the expense as a single entry
-        db.add_expense(
-            user.id,
-            final_amount,
-            category,
-            f"Receipt - Amount: {final_amount}",
-            source="image"
-        )
-        
-        # Confirmation message
-        confirmation = (
-            f"✅ **Receipt Processed!**\n\n"
-            f"💰 Amount: {CURRENCY}{final_amount:.2f}\n"
-            f"🏷️ Category: {category}\n"
-            f"📷 Source: image receipt\n\n"
-            f"Use /summary to see your expenses!"
-        )
-        
-        await update.message.reply_text(confirmation, parse_mode='Markdown')
-        
+
+        parsed_items = []
+        category_values = []
+        for item in (analysis.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+
+            item_name = (item.get("name") or "").strip() or "Receipt Item"
+            item_category = (item.get("category") or "").strip()
+            if not item_category or item_category == "Other":
+                inferred_item_category = parser._extract_category(item_name.lower())
+                item_category = inferred_item_category if inferred_item_category else "Other"
+
+            quantity_value = _safe_float(item.get("quantity"))
+            unit_price = _safe_float(item.get("unit_price") or item.get("price"))
+            item_amount = _safe_float(item.get("total_price") or item.get("amount"))
+
+            if item_amount is None and quantity_value and unit_price:
+                item_amount = round(quantity_value * unit_price, 2)
+            if item_amount is None and unit_price:
+                item_amount = unit_price
+
+            if item_amount is None:
+                continue
+
+            quantity = None
+            if quantity_value is not None and quantity_value > 0:
+                quantity = int(quantity_value) if float(quantity_value).is_integer() else quantity_value
+
+            if item_category != "Other" and item_category not in category_values:
+                category_values.append(item_category)
+
+            description_parts = [item_name]
+            if quantity is not None:
+                description_parts.append(f"Qty: {quantity}")
+            if unit_price is not None:
+                description_parts.append(f"Unit: {unit_price:.2f}")
+
+            parsed_items.append({
+                "amount": item_amount,
+                "category": item_category,
+                "description": " | ".join(description_parts),
+            })
+
+        if not category_values and ocr_text:
+            inferred_category = parser._extract_category(ocr_text.lower())
+            if inferred_category and inferred_category != "Other":
+                category_values.append(inferred_category)
+        bill_category = ", ".join(category_values) if category_values else "Other"
+
+        bill_ref = f"BILL-{user.id}-{int(time.time() * 1000)}"
+        saved_item_count = 0
+
+        for item_entry in parsed_items:
+            db.add_expense(
+                user.id,
+                item_entry["amount"],
+                item_entry["category"],
+                item_entry["description"],
+                source="image",
+                transaction_id=bill_ref,
+                payment_method="receipt",
+            )
+            saved_item_count += 1
+
+        if saved_item_count == 0:
+            fallback_label = chosen_label if chosen_label else "Amount"
+            db.add_expense(
+                user.id,
+                chosen_amount,
+                bill_category,
+                f"Receipt Total ({fallback_label})",
+                source="image",
+                transaction_id=bill_ref,
+                payment_method="receipt",
+            )
+            saved_item_count = 1
+
+        bill_entries = []
+        if subtotal:
+            bill_entries.append(("Bill Subtotal", subtotal))
+        if total:
+            bill_entries.append(("Bill Total", total))
+        if grand_total:
+            bill_entries.append(("Bill Grand Total", grand_total))
+        bill_entries.append(("Bill Amount", chosen_amount))
+
+        unique_entries = []
+        seen = set()
+        for label, value in bill_entries:
+            key = (label, round(float(value), 2))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_entries.append((label, value))
+
+        for label, value in unique_entries:
+            db.add_expense(
+                user.id,
+                value,
+                bill_category,
+                label,
+                source="image",
+                transaction_id=bill_ref,
+                payment_method="receipt",
+            )
+
+        lines = [
+            "Bill analysis:",
+            f"Category: {bill_category}",
+            f"Subtotal: {CURRENCY}{subtotal:.2f}" if subtotal else "Subtotal: N/A",
+            f"Total: {CURRENCY}{total:.2f}" if total else "Total: N/A",
+            f"Grand Total: {CURRENCY}{grand_total:.2f}" if grand_total else "Grand Total: N/A",
+            f"Amount: {CURRENCY}{chosen_amount:.2f}",
+            f"Items Saved: {saved_item_count}",
+        ]
+        await update.message.reply_text("\n".join(lines))
+
     except Exception as e:
-        logger.error(f"❌ Error processing receipt: {str(e)}")
+        logger.error("Error processing receipt: %s", str(e))
         await update.message.reply_text(
             f"Error processing receipt: {str(e)}\n"
             f"Please try again or manually enter the amount."
         )
-    
+
     # Clean up temp file
     import os
     if os.path.exists("temp_receipt.jpg"):
@@ -383,6 +519,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         # Parse the transcribed text
         amount, category, description = parser.parse_expense(text)
+        description = parser.normalize_description_for_voice(description, category)
         
         if not amount:
             await update.message.reply_text(
@@ -429,6 +566,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     user = update.effective_user
     db.add_user(user.id, user.username, user.first_name)
+    await update.message.reply_text("Image received. Processing...")
     
     # Check if it's a screenshot (caption might indicate payment info)
     caption = update.message.caption or ""
@@ -459,26 +597,25 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logger.warning(f"⚠️ Configured OCR failed, trying fallback: {e}")
         
-        # Fallback to EasyOCR if configured method failed
-        if not result or not result.get('amount'):
-            try:
-                from nlp_processor_alternative import EasyOCRProcessor
-                ocr = EasyOCRProcessor()
-                result = ocr.parse_receipt("temp_payment.jpg")
-                logger.info("✓ EasyOCR fallback successful")
-            except Exception as e:
-                logger.warning(f"⚠️ EasyOCR fallback failed: {e}")
-        
-        # Final fallback to original Tesseract
+        # Fallback to Tesseract if configured method failed
         if not result or not result.get('amount'):
             try:
                 from nlp_processor import OCRProcessor
                 ocr = OCRProcessor()
                 result = ocr.parse_receipt("temp_payment.jpg")
-                logger.info("✓ Tesseract fallback successful")
+                logger.info("Tesseract fallback successful")
             except Exception as e:
-                logger.warning(f"⚠️ Tesseract fallback failed: {e}")
-        
+                logger.warning("Tesseract fallback failed: %s", e)
+
+        # Final fallback to EasyOCR
+        if not result or not result.get('amount'):
+            try:
+                from nlp_processor import EasyOCRProcessor
+                ocr = EasyOCRProcessor()
+                result = ocr.parse_receipt("temp_payment.jpg")
+                logger.info("EasyOCR fallback successful")
+            except Exception as e:
+                logger.warning("EasyOCR fallback failed: %s", e)
         if not result or not result['amount']:
             await update.message.reply_text(
                 "⚠️ Couldn't extract payment details.\n\n"
@@ -567,10 +704,10 @@ def main():
     
     # Export commands
     application.add_handler(CommandHandler("export", export_all))
-    application.add_handler(CommandHandler("export_monthly", export_monthly))
-    application.add_handler(CommandHandler("export_weekly", export_weekly))
-    application.add_handler(CommandHandler("export_today", export_today_data))
-    application.add_handler(CommandHandler("export_csv", export_csv))
+    application.add_handler(CommandHandler(["export_monthly", "exportmonthly"], export_monthly))
+    application.add_handler(CommandHandler(["export_weekly", "exportweekly"], export_weekly))
+    application.add_handler(CommandHandler(["export_today", "exporttoday"], export_today_data))
+    application.add_handler(CommandHandler(["export_csv", "exportcsv"], export_csv))
     application.add_handler(CommandHandler("pdf", export_pdf))
     application.add_handler(CommandHandler("graph", export_graph))
     

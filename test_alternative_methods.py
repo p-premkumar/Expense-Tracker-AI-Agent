@@ -33,7 +33,7 @@ except Exception as e:
     print(f"Original imports failed: {e}")
 
 try:
-    from nlp_processor_alternative import (
+    from nlp_processor import (
         EasyOCRProcessor, PaddleOCRProcessor, VoiceProcessor as VoiceAlt
     )
     print("Alternative methods imports successful")

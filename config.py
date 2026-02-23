@@ -8,6 +8,7 @@ load_dotenv()
 
 # Telegram Bot Token
 BOT_TOKEN = "8140750596:AAEaSEXVus7m1_3iVhQ7BXDtA4uu-YEzyno"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Database
 DATABASE_PATH = "expenses.db"
