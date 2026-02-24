@@ -2,6 +2,7 @@
 Main Telegram Bot Handler for Expense Tracker
 """
 import logging
+import re
 import time
 from telegram import Update
 from telegram.ext import (
@@ -252,38 +253,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     logger.warning("Gemini failed, switching to OCR fallback.")
                 analysis = None
 
-        # Fallback path: OCR + parser analysis
+        # Fallback path: OCR + parser analysis (priority: EasyOCR -> Tesseract)
         if not analysis:
-            try:
-                from ocr_config import get_ocr_processor
-                ocr = get_ocr_processor()
-                if ocr:
-                    result = ocr.parse_receipt("temp_receipt.jpg")
-                    ocr_text = result.get('text') if result else None
-            except Exception as e:
-                logger.warning("Configured OCR failed: %s", e)
+            if not ocr_text:
+                _, ocr_text = _run_easyocr_receipt("temp_receipt.jpg")
 
             if not ocr_text:
-                try:
-                    from nlp_processor import OCRProcessor
-                    ocr = OCRProcessor()
-                    result = ocr.parse_receipt("temp_receipt.jpg")
-                    ocr_text = result.get('text') if result else None
-                    if ocr_text:
-                        logger.info("Tesseract successful")
-                except Exception as e:
-                    logger.warning("Tesseract failed: %s", e)
-
-            if not ocr_text:
-                try:
-                    from nlp_processor import EasyOCRProcessor
-                    ocr = EasyOCRProcessor()
-                    result = ocr.parse_receipt("temp_receipt.jpg")
-                    ocr_text = result.get('text') if result else None
-                    if ocr_text:
-                        logger.info("EasyOCR successful")
-                except Exception as e:
-                    logger.warning("EasyOCR failed: %s", e)
+                _, ocr_text = _run_tesseract_receipt("temp_receipt.jpg")
 
             if ocr_text:
                 analysis = parser.analyze_receipt(ocr_text)
@@ -546,125 +522,522 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         os.remove("temp_voice.ogg")
 
 
+def _extract_ocr_text(result):
+    """Extract best available OCR text from parser output."""
+    if not isinstance(result, dict):
+        return ""
+
+    for key in ("raw_text", "text", "description"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _gemini_result_to_text(gemini_result):
+    """Convert Gemini structured analysis into searchable text lines."""
+    if not isinstance(gemini_result, dict):
+        return ""
+
+    text_parts = []
+    key_map = {
+        "image_type": "Image Type",
+        "merchant": "Merchant",
+        "date": "Date",
+        "transaction_time": "Date/Time",
+        "amount": "Amount",
+        "subtotal": "Subtotal",
+        "total": "Total",
+        "grand_total": "Grand Total",
+        "final_amount": "Final Amount",
+        "upi_to": "To",
+        "upi_from": "From",
+        "upi_transaction_id": "UPI transaction ID",
+    }
+    for key in (
+        "image_type",
+        "merchant",
+        "date",
+        "transaction_time",
+        "amount",
+        "subtotal",
+        "total",
+        "grand_total",
+        "final_amount",
+        "upi_to",
+        "upi_from",
+        "upi_transaction_id",
+    ):
+        value = gemini_result.get(key)
+        if value is not None and str(value).strip():
+            text_parts.append(f"{key_map.get(key, key)}: {value}")
+
+    for item in (gemini_result.get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        item_name = (item.get("name") or "").strip()
+        item_total = item.get("total_price") or item.get("amount")
+        if not item_name:
+            continue
+        text_parts.append(f"{item_name} {item_total}" if item_total else item_name)
+
+    return "\n".join(text_parts).strip()
+
+
+def _run_easyocr_receipt(image_path):
+    """Run EasyOCR receipt parser and return (result, text)."""
+    try:
+        from nlp_processor import EasyOCRProcessor
+        ocr = EasyOCRProcessor()
+        result = ocr.parse_receipt(image_path)
+        text = _extract_ocr_text(result)
+        if text:
+            logger.info("EasyOCR successful")
+        return result, text
+    except Exception as easyocr_error:
+        logger.warning("EasyOCR failed: %s", easyocr_error)
+        return None, ""
+
+
+def _run_tesseract_receipt(image_path):
+    """Run Tesseract OCR fallback and return (result, text)."""
+    try:
+        import pytesseract
+        from PIL import Image
+
+        with Image.open(image_path) as image:
+            text = (pytesseract.image_to_string(image) or "").strip()
+
+        if not text:
+            return None, ""
+
+        amount, category, description = parser.parse_expense(text)
+        result = {
+            "amount": amount,
+            "category": category,
+            "description": description or text[:120],
+            "raw_text": text,
+            "source": "tesseract",
+        }
+        logger.info("Tesseract successful")
+        return result, text
+    except Exception as tesseract_error:
+        logger.warning("Tesseract failed: %s", tesseract_error)
+        return None, ""
+
+
+def _classify_image_kind(caption, ocr_text):
+    """
+    Classify uploaded image as:
+    - 'upi' for payment screenshots
+    - 'receipt' for bill receipts (default fallback)
+    """
+    combined = f"{caption or ''}\n{ocr_text or ''}".lower()
+
+    upi_keywords = [
+        "upi",
+        "transaction id",
+        "upi transaction id",
+        "utr",
+        "google pay",
+        "gpay",
+        "phonepe",
+        "paytm",
+        "completed",
+        "paid to",
+        "sent to",
+        "from:",
+        "to:",
+    ]
+    receipt_keywords = [
+        "invoice",
+        "receipt",
+        "subtotal",
+        "grand total",
+        "tax",
+        "gst",
+        "qty",
+        "quantity",
+        "item",
+        "bill no",
+    ]
+
+    upi_score = sum(1 for token in upi_keywords if token in combined)
+    receipt_score = sum(1 for token in receipt_keywords if token in combined)
+
+    strong_upi_tokens = ("upi", "transaction id", "google pay", "gpay", "phonepe", "paytm", "utr")
+    if any(token in combined for token in strong_upi_tokens):
+        return "upi"
+
+    if upi_score >= 2 and upi_score >= receipt_score:
+        return "upi"
+    if receipt_score >= 2 and receipt_score > upi_score:
+        return "receipt"
+    return "receipt"
+
+
+def _clean_upi_party(value):
+    """Normalize extracted payer/payee names."""
+    if not value:
+        return None
+    cleaned = re.sub(r"\s+", " ", value).strip(" :-|")
+    cleaned = re.sub(r"\s*\(.*?\)\s*$", "", cleaned).strip()
+    return cleaned or None
+
+
+def _extract_upi_amount(text):
+    """Extract transaction amount from UPI screenshot OCR text."""
+    if not text:
+        return None
+
+    normalized = text.replace(",", "")
+
+    label_patterns = [
+        r"(?:amount|paid|sent|debited|received)\s*[:\-]?\s*[^0-9]{0,6}\s*([0-9]+(?:\.[0-9]{1,2})?)",
+        r"(?:\u20B9|rs\.?|inr)\s*([0-9]+(?:\.[0-9]{1,2})?)",
+    ]
+    for pattern in label_patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            try:
+                value = float(match.group(1))
+                if value > 0:
+                    return value
+            except (ValueError, TypeError):
+                continue
+
+    # Fallback: detect isolated amount line like "100" or "₹100".
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        line_match = re.fullmatch(
+            r"(?:[^\dA-Za-z]{0,3}\s*)?([0-9]+(?:\.[0-9]{1,2})?)",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if not line_match:
+            continue
+        try:
+            value = float(line_match.group(1))
+            if 0 < value < 100000:
+                return value
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _extract_upi_datetime(text):
+    """Extract transaction date/time as text from OCR."""
+    if not text:
+        return None
+
+    patterns = [
+        r"\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4},?\s+\d{1,2}:\d{2}\s*(?:am|pm)?\b",
+        r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}[, ]+\d{1,2}:\d{2}\s*(?:am|pm)?\b",
+        r"\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return re.sub(r"\s+", " ", match.group(0)).strip()
+    return None
+
+
+def _has_time_component(value):
+    """Return True if value contains a clock time like HH:MM."""
+    if not value:
+        return False
+    return bool(re.search(r"\b\d{1,2}:\d{2}\b", str(value)))
+
+
+def _extract_upi_transaction_id(text):
+    """Extract UPI transaction ID/UTR from OCR text."""
+    if not text:
+        return None
+
+    patterns = [
+        r"(?:upi\s*transaction\s*id|transaction\s*id|txn\s*id|utr(?:\s*number)?)\s*[:#-]?\s*([A-Za-z0-9\-]{8,40})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _extract_upi_party(text, field_name):
+    """Extract To/From party from OCR text."""
+    if not text:
+        return None
+
+    key = "to" if field_name == "to" else "from"
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        match = re.match(rf"^{key}\s*[:\-]\s*(.+)$", line, flags=re.IGNORECASE)
+        if match:
+            return _clean_upi_party(match.group(1))
+
+    if key == "to":
+        match = re.search(r"(?:^|\n)\s*to\s+([A-Za-z][A-Za-z0-9 .]{2,80})", text, flags=re.IGNORECASE)
+        if match:
+            return _clean_upi_party(match.group(1))
+
+    if key == "from":
+        match = re.search(r"(?:^|\n)\s*from\s+([A-Za-z][A-Za-z0-9 .]{2,80})", text, flags=re.IGNORECASE)
+        if match:
+            return _clean_upi_party(match.group(1))
+
+    return None
+
+
+def _extract_upi_details(ocr_text, caption):
+    """Extract structured UPI screenshot fields."""
+    text = f"{ocr_text or ''}\n{caption or ''}".strip()
+    return {
+        "to": _extract_upi_party(text, "to"),
+        "from": _extract_upi_party(text, "from"),
+        "amount": _extract_upi_amount(text),
+        "date_time": _extract_upi_datetime(text),
+        "upi_transaction_id": _extract_upi_transaction_id(text),
+    }
+
+
+def _extract_upi_details_from_gemini(gemini_result):
+    """Extract UPI detail fields from Gemini structured output."""
+    if not isinstance(gemini_result, dict):
+        return {
+            "to": None,
+            "from": None,
+            "amount": None,
+            "date_time": None,
+            "upi_transaction_id": None,
+        }
+
+    def _to_float(value):
+        try:
+            if value is None:
+                return None
+            amount = float(value)
+            return amount if amount > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    amount = (
+        _to_float(gemini_result.get("amount"))
+        or _to_float(gemini_result.get("final_amount"))
+        or _to_float(gemini_result.get("grand_total"))
+        or _to_float(gemini_result.get("total"))
+        or _to_float(gemini_result.get("subtotal"))
+    )
+
+    return {
+        "to": _clean_upi_party(gemini_result.get("upi_to")),
+        "from": _clean_upi_party(gemini_result.get("upi_from")),
+        "amount": amount,
+        "date_time": (gemini_result.get("transaction_time") or gemini_result.get("date") or "").strip() or None,
+        "upi_transaction_id": (gemini_result.get("upi_transaction_id") or "").strip() or None,
+    }
+
+
 async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle screenshot uploads for online payment tracking"""
-    
+    """Handle screenshots by auto-classifying receipt vs UPI payment image."""
     if not update.message.photo:
         return
-    
+
     user = update.effective_user
     db.add_user(user.id, user.username, user.first_name)
     await update.message.reply_text("Image received. Processing...")
-    
-    # Check if it's a screenshot (caption might indicate payment info)
+
     caption = update.message.caption or ""
-    is_payment = "transaction" in caption.lower() or "payment" in caption.lower() or "upi" in caption.lower() or "bank" in caption.lower()
-    
-    if not is_payment:
-        # Call the regular receipt handler for regular photos
-        await handle_photo(update, context)
-        return
-    
-    # Get the file
     photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
-    
-    try:
-        # Download file
-        await file.download_to_drive("temp_payment.jpg")
-        
-        # Extract text from screenshot - try configured method first, fallback to others
-        result = None
-        
-        # Try configured method first
-        try:
-            from ocr_config import get_ocr_processor
-            ocr = get_ocr_processor()
-            if ocr:
-                result = ocr.parse_receipt("temp_payment.jpg")
-        except Exception as e:
-            logger.warning(f"⚠️ Configured OCR failed, trying fallback: {e}")
-        
-        # Fallback to Tesseract if configured method failed
-        if not result or not result.get('amount'):
-            try:
-                from nlp_processor import OCRProcessor
-                ocr = OCRProcessor()
-                result = ocr.parse_receipt("temp_payment.jpg")
-                logger.info("Tesseract fallback successful")
-            except Exception as e:
-                logger.warning("Tesseract fallback failed: %s", e)
 
-        # Final fallback to EasyOCR
-        if not result or not result.get('amount'):
+    try:
+        await file.download_to_drive("temp_payment.jpg")
+
+        result = None
+        ocr_text = ""
+        image_kind = "receipt"
+        gemini_upi_details = {
+            "to": None,
+            "from": None,
+            "amount": None,
+            "date_time": None,
+            "upi_transaction_id": None,
+        }
+
+        # Analyzer priority: Gemini -> EasyOCR -> Tesseract
+        if gemini:
             try:
-                from nlp_processor import EasyOCRProcessor
-                ocr = EasyOCRProcessor()
-                result = ocr.parse_receipt("temp_payment.jpg")
-                logger.info("EasyOCR fallback successful")
-            except Exception as e:
-                logger.warning("EasyOCR fallback failed: %s", e)
-        if not result or not result['amount']:
+                gemini_result = gemini.analyze_receipt("temp_payment.jpg")
+                if gemini_result and not gemini_result.get("error"):
+                    result = gemini_result
+                    gemini_upi_details = _extract_upi_details_from_gemini(gemini_result)
+                    ocr_text = _gemini_result_to_text(gemini_result)
+                    image_type = str(gemini_result.get("image_type") or "").strip().lower()
+                    if "upi" in image_type or "payment" in image_type:
+                        image_kind = "upi"
+                    elif image_type in {"receipt", "bill", "invoice"}:
+                        image_kind = "receipt"
+                    else:
+                        image_kind = _classify_image_kind(caption, ocr_text)
+                    logger.info("Gemini screenshot analysis successful")
+                else:
+                    logger.warning("Gemini screenshot analysis failed, falling back to OCR")
+            except Exception as gemini_error:
+                logger.warning("Gemini screenshot analysis exception: %s", gemini_error)
+
+        # If Gemini already identifies this as a receipt, use receipt flow directly.
+        # This keeps Gemini as the primary analyzer for bill receipts.
+        if image_kind == "receipt":
+            gemini_upi_probe = _extract_upi_details(ocr_text, caption)
+            combined_probe = f"{caption or ''}\n{ocr_text or ''}".lower()
+            gemini_has_upi_signals = bool(
+                gemini_upi_probe.get("upi_transaction_id")
+                or (gemini_upi_probe.get("to") and gemini_upi_probe.get("from"))
+                or ("upi" in combined_probe and gemini_upi_probe.get("amount"))
+                or ("transaction id" in combined_probe and gemini_upi_probe.get("amount"))
+                or ("google pay" in combined_probe and gemini_upi_probe.get("amount"))
+                or ("gpay" in combined_probe and gemini_upi_probe.get("amount"))
+            )
+            if not gemini_has_upi_signals:
+                await handle_photo(update, context)
+                return
+
+        # OCR fallback only when Gemini did not produce a clear UPI/receipt decision.
+        if image_kind != "upi":
+            easy_result, easy_text = _run_easyocr_receipt("temp_payment.jpg")
+            if easy_text:
+                result = easy_result
+                ocr_text = easy_text
+                image_kind = _classify_image_kind(caption, ocr_text)
+
+        if image_kind != "upi":
+            tess_result, tess_text = _run_tesseract_receipt("temp_payment.jpg")
+            if tess_text:
+                result = tess_result
+                ocr_text = tess_text
+                image_kind = _classify_image_kind(caption, ocr_text)
+
+        upi_details = _extract_upi_details(ocr_text, caption)
+        # Prefer Gemini fields when available; fill remaining fields from OCR text.
+        for key in ("to", "from", "date_time", "upi_transaction_id"):
+            if not upi_details.get(key) and gemini_upi_details.get(key):
+                upi_details[key] = gemini_upi_details[key]
+        if gemini_upi_details.get("amount"):
+            upi_details["amount"] = gemini_upi_details["amount"]
+
+        # If date exists without time, try one OCR pass to enrich transaction time.
+        if not _has_time_component(upi_details.get("date_time")):
+            easy_result_dt, easy_text_dt = _run_easyocr_receipt("temp_payment.jpg")
+            if easy_text_dt:
+                maybe_dt = _extract_upi_datetime(easy_text_dt)
+                if _has_time_component(maybe_dt):
+                    upi_details["date_time"] = maybe_dt
+                # Backfill missing UPI id and parties from OCR text if needed.
+                if not upi_details.get("upi_transaction_id"):
+                    upi_details["upi_transaction_id"] = _extract_upi_transaction_id(easy_text_dt)
+                if not upi_details.get("to"):
+                    upi_details["to"] = _extract_upi_party(easy_text_dt, "to")
+                if not upi_details.get("from"):
+                    upi_details["from"] = _extract_upi_party(easy_text_dt, "from")
+                if not upi_details.get("amount") and isinstance(easy_result_dt, dict):
+                    try:
+                        amt = easy_result_dt.get("amount")
+                        upi_details["amount"] = float(amt) if amt else upi_details.get("amount")
+                    except (TypeError, ValueError):
+                        pass
+
+        # Guard against false "receipt" classification for real UPI screenshots.
+        combined_for_signal = f"{caption or ''}\n{ocr_text or ''}".lower()
+        has_upi_signals = bool(
+            upi_details.get("upi_transaction_id")
+            or (upi_details.get("to") and upi_details.get("from"))
+            or ("upi" in combined_for_signal and upi_details.get("amount"))
+            or ("transaction id" in combined_for_signal and upi_details.get("amount"))
+            or ("google pay" in combined_for_signal and upi_details.get("amount"))
+            or ("gpay" in combined_for_signal and upi_details.get("amount"))
+        )
+
+        if image_kind == "receipt" and not has_upi_signals:
+            await handle_photo(update, context)
+            return
+
+        amount = upi_details.get("amount")
+
+        if not amount and isinstance(result, dict):
+            result_amount = result.get("amount")
+            try:
+                amount = float(result_amount) if result_amount else None
+            except (TypeError, ValueError):
+                amount = None
+
+        if not amount and ocr_text:
+            parsed_amount, _, _ = parser.parse_expense(ocr_text)
+            amount = parsed_amount
+
+        if not amount:
             await update.message.reply_text(
-                "⚠️ Couldn't extract payment details.\n\n"
-                "Please reply with transaction details in format:\n"
-                "`TXID: ABC123\nAccount: MyBank\nAmount: 500`\n\n"
-                "Or upload a clearer screenshot."
+                "Could not extract UPI amount from screenshot.\n"
+                "Please upload a clearer screenshot or type amount manually."
             )
             return
-        
-        # Extract transaction details from caption or OCR
-        transaction_id = None
-        account_name = None
-        
-        # Try to extract from caption
-        if caption:
-            lines = caption.split('\n')
-            for line in lines:
-                if 'tx' in line.lower() or 'id' in line.lower():
-                    transaction_id = line.split(':')[-1].strip()
-                if 'account' in line.lower():
-                    account_name = line.split(':')[-1].strip()
-        
-        # Store with transaction details
+
+        to_value = upi_details.get("to")
+        from_value = upi_details.get("from")
+        txn_time = upi_details.get("date_time")
+        upi_txn_id = upi_details.get("upi_transaction_id")
+
+        description = "UPI payment"
+        if to_value:
+            description = f"UPI payment to {to_value}"
+
         db.add_expense(
             user.id,
-            result['amount'],
-            result['category'],
-            result['text'][:100],
+            float(amount),
+            "Other",
+            description,
             source="online_payment",
-            transaction_id=transaction_id,
-            account_name=account_name,
-            payment_method="digital"
+            transaction_id=upi_txn_id,
+            account_name=from_value,
+            payment_method="upi",
+            upi_to=to_value,
+            upi_from=from_value,
+            transaction_time=txn_time,
         )
-        
-        confirmation = (
-            f"✅ **Online Payment Recorded!**\n\n"
-            f"💰 Amount: {CURRENCY}{result['amount']:.2f}\n"
-            f"🏷️ Category: {result['category']}\n"
-        )
-        
-        if transaction_id:
-            confirmation += f"🔑 Transaction ID: `{transaction_id}`\n"
-        if account_name:
-            confirmation += f"🏦 Account: {account_name}\n"
-        
-        confirmation += f"\n📱 Source: Online Payment/Screenshot\n\n"
-        confirmation += f"Use /summary to track your spending!"
-        
-        await update.message.reply_text(confirmation, parse_mode='Markdown')
-        
+
+        response_lines = [
+            "✅ **UPI Screenshot Processed!**",
+            "",
+            f"💰 Amount: {CURRENCY}{float(amount):.2f}",
+        ]
+        if to_value:
+            response_lines.append(f"👤 To: {to_value}")
+        if from_value:
+            response_lines.append(f"👤 From: {from_value}")
+        if txn_time:
+            response_lines.append(f"🕒 Date/Time: {txn_time}")
+        if upi_txn_id:
+            response_lines.append(f"🔑 UPI Transaction ID: `{upi_txn_id}`")
+        response_lines.append("")
+        response_lines.append("Saved to database and will appear in Excel UPI Details sheet.")
+
+        await update.message.reply_text("\n".join(response_lines), parse_mode='Markdown')
+
     except Exception as e:
-        logger.error(f"Error processing payment screenshot: {str(e)}")
+        logger.error("Error processing payment screenshot: %s", str(e))
         await update.message.reply_text(
             f"❌ Error processing screenshot: {str(e)}\n"
-            f"Please try again with a clearer image or manually enter the details."
+            "Please try again with a clearer image or manually enter the details."
         )
-    
-    # Clean up
-    import os
-    if os.path.exists("temp_payment.jpg"):
-        os.remove("temp_payment.jpg")
+
+    finally:
+        # Clean up temp file regardless of branch/return.
+        import os
+        if os.path.exists("temp_payment.jpg"):
+            os.remove("temp_payment.jpg")
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

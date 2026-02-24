@@ -79,6 +79,106 @@ class ExcelExporter:
         if date_obj.tzinfo is None:
             date_obj = date_obj.replace(tzinfo=self._utc)
         return date_obj.astimezone(self._ist)
+
+    def _normalize_txn_datetime_display(self, txn_time, logged_date_obj):
+        """
+        Ensure UPI transaction datetime is always displayed as date + time.
+        If txn_time has only date/time/empty, complete missing parts from logged timestamp.
+        """
+        logged_display = logged_date_obj.strftime("%d-%m-%Y %H:%M")
+        raw = (txn_time or "").strip()
+        if not raw:
+            return logged_display
+
+        value = re.sub(r"\s+", " ", raw)
+        has_date = bool(
+            re.search(
+                r"\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",
+                value,
+                flags=re.IGNORECASE,
+            )
+        )
+        has_time = bool(
+            re.search(
+                r"\b\d{1,2}:\d{2}(?:\s*(?:am|pm))?\b",
+                value,
+                flags=re.IGNORECASE,
+            )
+        )
+
+        if has_date and has_time:
+            return value
+        if has_date and not has_time:
+            return f"{value} {logged_date_obj.strftime('%H:%M')}"
+        if has_time and not has_date:
+            return f"{logged_date_obj.strftime('%d-%m-%Y')} {value}"
+        return logged_display
+
+    def _get_upi_meta_map(self, user_id, expense_ids):
+        """Fetch UPI metadata for given expense IDs."""
+        if not expense_ids:
+            return {}
+
+        conn = sqlite3.connect(self.db.db_path)
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in expense_ids)
+        query = f"""
+            SELECT id, source, payment_method, amount, upi_to, upi_from, transaction_time, transaction_id
+            FROM expenses
+            WHERE user_id = ?
+              AND id IN ({placeholders})
+        """
+        cursor.execute(query, (user_id, *expense_ids))
+        rows = cursor.fetchall()
+        conn.close()
+
+        meta_map = {}
+        for row in rows:
+            exp_id, source, payment_method, amount, upi_to, upi_from, transaction_time, transaction_id = row
+            meta_map[exp_id] = {
+                "source": source,
+                "payment_method": payment_method,
+                "amount": amount,
+                "upi_to": upi_to,
+                "upi_from": upi_from,
+                "transaction_time": transaction_time,
+                "transaction_id": transaction_id,
+            }
+        return meta_map
+
+    def _extract_upi_excel_columns(self, meta, fallback_amount, logged_date_obj):
+        """Return tuple for columns G-K: To, From, Amount, Date/Time, UPI transaction id."""
+        if not meta:
+            return "", "", "", "", ""
+
+        source = (meta.get("source") or "").strip().lower()
+        payment_method = (meta.get("payment_method") or "").strip().lower()
+        is_upi = (
+            source == "online_payment"
+            or payment_method == "upi"
+            or bool(meta.get("upi_to"))
+            or bool(meta.get("upi_from"))
+            or bool(meta.get("transaction_time"))
+        )
+        if not is_upi:
+            return "", "", "", "", ""
+
+        upi_amount = meta.get("amount")
+        if upi_amount is None:
+            upi_amount = fallback_amount
+
+        txn_display = self._normalize_txn_datetime_display(
+            meta.get("transaction_time"),
+            logged_date_obj,
+        )
+
+        return (
+            meta.get("upi_to") or "",
+            meta.get("upi_from") or "",
+            upi_amount if upi_amount is not None else "",
+            txn_display,
+            meta.get("transaction_id") or "",
+        )
     
     def export_all_expenses(self, user_id, filename=None):
         """Export all user expenses to Excel"""
@@ -98,26 +198,52 @@ class ExcelExporter:
             return filename
         
         # Headers
-        headers = ["ID", "Date", "Category", "Amount", "Description", "Source"]
+        headers = [
+            "ID",
+            "Date",
+            "Category",
+            "Amount",
+            "Description",
+            "Source",
+            "To",
+            "From",
+            "Amount",
+            "Date/Time",
+            "UPI transaction id",
+        ]
         self._add_headers(ws, headers)
-        
+
+        upi_meta_map = self._get_upi_meta_map(user_id, [exp_id for exp_id, *_ in expenses])
+
         # Data
         # Use sequential Excel IDs (1..N) so numbering restarts after deletions
         for seq, (exp_id, amount, category, description, date, source) in enumerate(expenses, start=1):
             row_idx = seq + 1
             date_obj = self._parse_to_ist(date)
+            to_value, from_value, upi_amount, upi_date_time, upi_txn_id = self._extract_upi_excel_columns(
+                upi_meta_map.get(exp_id, {}),
+                amount,
+                date_obj,
+            )
             ws[f'A{row_idx}'] = seq
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount
             ws[f'E{row_idx}'] = self._description_for_excel(description, category, source)
             ws[f'F{row_idx}'] = source if source else "text"
-            
+            ws[f'G{row_idx}'] = to_value
+            ws[f'H{row_idx}'] = from_value
+            ws[f'I{row_idx}'] = upi_amount
+            ws[f'J{row_idx}'] = upi_date_time
+            ws[f'K{row_idx}'] = upi_txn_id
+
             # Format currency column
             ws[f'D{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
-            
+            if upi_amount != "":
+                ws[f'I{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
+
             # Apply border
-            for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
         
         # Auto-adjust column widths
@@ -125,8 +251,13 @@ class ExcelExporter:
         ws.column_dimensions['B'].width = 28
         ws.column_dimensions['C'].width = 24
         ws.column_dimensions['D'].width = 20
-        ws.column_dimensions['E'].width = 60
+        ws.column_dimensions['E'].width = 46
         ws.column_dimensions['F'].width = 20
+        ws.column_dimensions['G'].width = 30
+        ws.column_dimensions['H'].width = 30
+        ws.column_dimensions['I'].width = 20
+        ws.column_dimensions['J'].width = 26
+        ws.column_dimensions['K'].width = 28
         
         # Add summary sheet
         self._add_summary_sheet(wb, user_id, expenses)
@@ -142,6 +273,9 @@ class ExcelExporter:
 
         # Add bill items sheet (item-level category/amount/quantity)
         self._add_bill_items_sheet(wb, user_id, days=None, sheet_name="Bill Items")
+
+        # Add UPI details sheet (to/from/amount/date-time/transaction ID)
+        self._add_upi_details_sheet(wb, user_id, days=None, sheet_name="UPI Details")
 
         # Add pattern summary sheet
         self._add_pattern_summary_sheet(wb, expenses, sheet_name="Pattern Summary")
@@ -206,7 +340,7 @@ class ExcelExporter:
         ws.column_dimensions['D'].width = 24
         
         # Add detailed transactions sheet
-        self._add_detailed_sheet(wb, all_expenses)
+        self._add_detailed_sheet(wb, all_expenses, user_id=user_id)
 
         # Add bill totals sheet for this period
         self._add_bill_totals_sheet(wb, user_id, days=30, sheet_name="Bill Totals")
@@ -216,6 +350,9 @@ class ExcelExporter:
 
         # Add bill items sheet for this period
         self._add_bill_items_sheet(wb, user_id, days=30, sheet_name="Bill Items")
+
+        # Add UPI details sheet for this period
+        self._add_upi_details_sheet(wb, user_id, days=30, sheet_name="UPI Details")
 
         # Add pattern summary sheet for this period
         self._add_pattern_summary_sheet(wb, all_expenses, sheet_name="Pattern Summary")
@@ -293,7 +430,7 @@ class ExcelExporter:
         ws.column_dimensions['D'].width = 24
         
         # Add detailed transactions sheet
-        self._add_detailed_sheet(wb, all_expenses, sheet_name=f"Details - {days}d")
+        self._add_detailed_sheet(wb, all_expenses, sheet_name=f"Details - {days}d", user_id=user_id)
 
         # Add bill totals sheet for this period
         self._add_bill_totals_sheet(wb, user_id, days=days, sheet_name=f"Bill Totals {days}d")
@@ -303,6 +440,9 @@ class ExcelExporter:
 
         # Add bill items sheet for this period
         self._add_bill_items_sheet(wb, user_id, days=days, sheet_name=f"Bill Items {days}d")
+
+        # Add UPI details sheet for this period
+        self._add_upi_details_sheet(wb, user_id, days=days, sheet_name=f"UPI Details {days}d")
 
         # Add pattern summary sheet for this period
         self._add_pattern_summary_sheet(wb, all_expenses, sheet_name=f"Pattern Summary {days}d")
@@ -375,7 +515,7 @@ class ExcelExporter:
         ws.column_dimensions['C'].width = 20
         ws.column_dimensions['D'].width = 24
 
-        self._add_detailed_sheet(wb, all_expenses, sheet_name="Details - Range")
+        self._add_detailed_sheet(wb, all_expenses, sheet_name="Details - Range", user_id=user_id)
         self._add_bill_totals_sheet(
             wb,
             user_id,
@@ -396,6 +536,13 @@ class ExcelExporter:
             start_date=start_date,
             end_date=end_date,
             sheet_name="Bill Items Range",
+        )
+        self._add_upi_details_sheet(
+            wb,
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            sheet_name="UPI Details Range",
         )
         self._add_pattern_summary_sheet(wb, all_expenses, sheet_name="Pattern Summary Range")
 
@@ -502,41 +649,74 @@ class ExcelExporter:
         ws.column_dimensions['A'].width = 24
         ws.column_dimensions['B'].width = 24
     
-    def _add_detailed_sheet(self, wb, expenses, sheet_name="Detailed"):
+    def _add_detailed_sheet(self, wb, expenses, sheet_name="Detailed", user_id=None):
         """Add detailed transactions sheet"""
         ws = wb.create_sheet(sheet_name)
         
         # Headers
-        headers = ["ID", "Date", "Category", "Amount", "Description", "Source"]
+        headers = [
+            "ID",
+            "Date",
+            "Category",
+            "Amount",
+            "Description",
+            "Source",
+            "To",
+            "From",
+            "Amount",
+            "Date/Time",
+            "UPI transaction id",
+        ]
         for col_idx, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col_idx)
             cell.value = header
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.border = self.thin_border
-        
+
+        upi_meta_map = {}
+        if user_id is not None:
+            upi_meta_map = self._get_upi_meta_map(user_id, [exp_id for exp_id, *_ in expenses])
+
         # Data
-        for seq, (_, amount, category, description, date, source) in enumerate(expenses, start=1):
+        for seq, (exp_id, amount, category, description, date, source) in enumerate(expenses, start=1):
             row_idx = seq + 1
             date_obj = self._parse_to_ist(date)
+            to_value, from_value, upi_amount, upi_date_time, upi_txn_id = self._extract_upi_excel_columns(
+                upi_meta_map.get(exp_id, {}),
+                amount,
+                date_obj,
+            )
             ws[f'A{row_idx}'] = seq
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount
             ws[f'E{row_idx}'] = self._description_for_excel(description, category, source)
             ws[f'F{row_idx}'] = source if source else "text"
-            
+            ws[f'G{row_idx}'] = to_value
+            ws[f'H{row_idx}'] = from_value
+            ws[f'I{row_idx}'] = upi_amount
+            ws[f'J{row_idx}'] = upi_date_time
+            ws[f'K{row_idx}'] = upi_txn_id
+
             ws[f'D{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
-            
-            for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+            if upi_amount != "":
+                ws[f'I{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
+
+            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
         
         ws.column_dimensions['A'].width = 12
         ws.column_dimensions['B'].width = 28
         ws.column_dimensions['C'].width = 24
         ws.column_dimensions['D'].width = 20
-        ws.column_dimensions['E'].width = 60
+        ws.column_dimensions['E'].width = 46
         ws.column_dimensions['F'].width = 20
+        ws.column_dimensions['G'].width = 30
+        ws.column_dimensions['H'].width = 30
+        ws.column_dimensions['I'].width = 20
+        ws.column_dimensions['J'].width = 26
+        ws.column_dimensions['K'].width = 28
 
     def _add_pattern_summary_sheet(self, wb, expenses, sheet_name="Pattern Summary"):
         """Add summary of extracted pattern names with amount/count."""
@@ -849,3 +1029,118 @@ class ExcelExporter:
         ws.column_dimensions['F'].width = 20
         ws.column_dimensions['G'].width = 18
         ws.column_dimensions['H'].width = 34
+
+    def _get_upi_rows(self, user_id, days=None, start_date=None, end_date=None):
+        """Fetch UPI screenshot rows with extracted metadata."""
+        conn = sqlite3.connect(self.db.db_path)
+        cursor = conn.cursor()
+
+        base_where = """
+            user_id = ?
+            AND (
+                lower(COALESCE(source, '')) = 'online_payment'
+                OR lower(COALESCE(payment_method, '')) = 'upi'
+                OR COALESCE(upi_to, '') <> ''
+                OR COALESCE(upi_from, '') <> ''
+            )
+        """
+
+        if start_date and end_date:
+            query = f"""
+                SELECT date, amount, description, source, transaction_id, upi_to, upi_from, transaction_time
+                FROM expenses
+                WHERE {base_where}
+                  AND date(date) BETWEEN date(?) AND date(?)
+                ORDER BY date DESC, id DESC
+            """
+            cursor.execute(query, (user_id, start_date, end_date))
+        elif days:
+            query = f"""
+                SELECT date, amount, description, source, transaction_id, upi_to, upi_from, transaction_time
+                FROM expenses
+                WHERE {base_where}
+                  AND date >= datetime('now', '-' || ? || ' days')
+                ORDER BY date DESC, id DESC
+            """
+            cursor.execute(query, (user_id, days))
+        else:
+            query = f"""
+                SELECT date, amount, description, source, transaction_id, upi_to, upi_from, transaction_time
+                FROM expenses
+                WHERE {base_where}
+                ORDER BY date DESC, id DESC
+            """
+            cursor.execute(query, (user_id,))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+    def _add_upi_details_sheet(self, wb, user_id, days=None, start_date=None, end_date=None, sheet_name="UPI Details"):
+        """Add UPI transaction detail sheet for extracted screenshot metadata."""
+        ws = wb.create_sheet(sheet_name)
+        rows = self._get_upi_rows(
+            user_id,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        headers = [
+            "Logged Date",
+            "Txn Date/Time",
+            "Amount",
+            "To",
+            "From",
+            "UPI Transaction ID",
+            "Source",
+            "Description",
+        ]
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.value = header
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.border = self.thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        if not rows:
+            ws['A2'] = "No UPI screenshot entries found"
+            ws.merge_cells("A2:H2")
+            ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
+            ws['A2'].border = self.thin_border
+            ws.column_dimensions['A'].width = 24
+            ws.column_dimensions['B'].width = 26
+            ws.column_dimensions['C'].width = 20
+            ws.column_dimensions['D'].width = 30
+            ws.column_dimensions['E'].width = 30
+            ws.column_dimensions['F'].width = 28
+            ws.column_dimensions['G'].width = 20
+            ws.column_dimensions['H'].width = 40
+            return
+
+        for row_idx, (date, amount, description, source, txn_id, upi_to, upi_from, txn_time) in enumerate(rows, start=2):
+            date_obj = self._parse_to_ist(date)
+            txn_display = self._normalize_txn_datetime_display(txn_time, date_obj)
+            ws[f'A{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
+            ws[f'B{row_idx}'] = txn_display
+            ws[f'C{row_idx}'] = amount
+            ws[f'D{row_idx}'] = upi_to or ""
+            ws[f'E{row_idx}'] = upi_from or ""
+            ws[f'F{row_idx}'] = txn_id or ""
+            ws[f'G{row_idx}'] = source or ""
+            ws[f'H{row_idx}'] = description or ""
+
+            ws[f'C{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
+
+            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+                ws[f'{col}{row_idx}'].border = self.thin_border
+
+        ws.column_dimensions['A'].width = 24
+        ws.column_dimensions['B'].width = 26
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 30
+        ws.column_dimensions['E'].width = 30
+        ws.column_dimensions['F'].width = 28
+        ws.column_dimensions['G'].width = 20
+        ws.column_dimensions['H'].width = 40

@@ -161,16 +161,23 @@ class GeminiProcessor:
             }
 
         prompt = (
-            "Analyze this receipt image and extract structured data. "
+            "Analyze this image (receipt OR UPI payment screenshot) and extract structured data. "
             "Return JSON only with keys: "
-            "\"merchant\" (string), "
-            "\"date\" (YYYY-MM-DD or null), "
+            "\"image_type\" (one of: receipt, upi, unknown), "
+            "\"merchant\" (string or null), "
+            "\"date\" (string or null), "
+            "\"transaction_time\" (string with date + time if visible, else null), "
             "\"subtotal\" (number or null), "
             "\"total\" (number or null), "
             "\"grand_total\" (number or null), "
             "\"final_amount\" (number or null), "
+            "\"amount\" (number or null), "
+            "\"upi_to\" (string or null), "
+            "\"upi_from\" (string or null), "
+            "\"upi_transaction_id\" (string or null), "
             "\"items\" (array of objects with keys: name, quantity, unit_price, total_price, category). "
-            "Focus on accurate bill totals and item-level lines."
+            "If this is a UPI screenshot, prioritize amount/to/from/transaction_time/upi_transaction_id. "
+            "For transaction_time, include clock time (HH:MM with am/pm if present in image)."
         )
 
         try:
@@ -431,11 +438,33 @@ class GeminiProcessor:
             })
 
         data["items"] = normalized_items
+        image_type = (data.get("image_type") or "").strip().lower()
+        if image_type:
+            if "upi" in image_type or "payment" in image_type:
+                image_type = "upi"
+            elif image_type in {"receipt", "bill", "invoice"}:
+                image_type = "receipt"
+            else:
+                image_type = "unknown"
+        data["image_type"] = image_type or None
+
         data["merchant"] = (data.get("merchant") or "").strip() or None
+        data["date"] = (data.get("date") or "").strip() or None
+        data["transaction_time"] = (data.get("transaction_time") or "").strip() or data["date"]
+        data["upi_to"] = (data.get("upi_to") or "").strip() or None
+        data["upi_from"] = (data.get("upi_from") or "").strip() or None
+        data["upi_transaction_id"] = (data.get("upi_transaction_id") or "").strip() or None
         data["subtotal"] = self._to_float(data.get("subtotal"))
         data["total"] = self._to_float(data.get("total"))
         data["grand_total"] = self._to_float(data.get("grand_total"))
         data["final_amount"] = self._to_float(data.get("final_amount"))
+        data["amount"] = (
+            self._to_float(data.get("amount"))
+            or data["final_amount"]
+            or data["grand_total"]
+            or data["total"]
+            or data["subtotal"]
+        )
 
     def _to_float(self, value):
         if value is None:

@@ -45,9 +45,27 @@ class ExpenseDatabase:
                 transaction_id TEXT,
                 account_name TEXT,
                 payment_method TEXT,
+                upi_to TEXT,
+                upi_from TEXT,
+                transaction_time TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         ''')
+
+        # Safe schema migration for existing databases.
+        cursor.execute("PRAGMA table_info(expenses)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        required_cols = {
+            "transaction_id": "TEXT",
+            "account_name": "TEXT",
+            "payment_method": "TEXT",
+            "upi_to": "TEXT",
+            "upi_from": "TEXT",
+            "transaction_time": "TEXT",
+        }
+        for col_name, col_type in required_cols.items():
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE expenses ADD COLUMN {col_name} {col_type}")
         
         # Categories table
         cursor.execute('''
@@ -91,15 +109,43 @@ class ExpenseDatabase:
         conn.commit()
         conn.close()
     
-    def add_expense(self, user_id, amount, category, description, source="text", transaction_id=None, account_name=None, payment_method=None):
+    def add_expense(
+        self,
+        user_id,
+        amount,
+        category,
+        description,
+        source="text",
+        transaction_id=None,
+        account_name=None,
+        payment_method=None,
+        upi_to=None,
+        upi_from=None,
+        transaction_time=None,
+    ):
         """Add a new expense"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO expenses (user_id, amount, category, description, source, transaction_id, account_name, payment_method)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, amount, category, description, source, transaction_id, account_name, payment_method))
+            INSERT INTO expenses (
+                user_id, amount, category, description, source, transaction_id,
+                account_name, payment_method, upi_to, upi_from, transaction_time
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            amount,
+            category,
+            description,
+            source,
+            transaction_id,
+            account_name,
+            payment_method,
+            upi_to,
+            upi_from,
+            transaction_time,
+        ))
         
         conn.commit()
         conn.close()
