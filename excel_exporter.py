@@ -30,6 +30,11 @@ class ExcelExporter:
     def _extract_pattern_list(self, description, category=None):
         """Extract matched pattern keywords from description/category text."""
         text = f"{description or ''} {category or ''}".lower()
+        # Remove receipt metadata fragments so only expense-pattern terms remain.
+        text = re.sub(r"\bqty\s*:\s*[0-9]+(?:\.[0-9]+)?\b", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bunit\s*:\s*[0-9]+(?:\.[0-9]+)?\b", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(qty|quantity|unit)\b", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s{2,}", " ", text).strip()
         if not text.strip():
             return []
 
@@ -47,6 +52,26 @@ class ExcelExporter:
     def _extract_pattern_names(self, description, category=None):
         patterns = self._extract_pattern_list(description, category)
         return ", ".join(patterns) if patterns else "Other"
+
+    def _extract_image_item_name(self, description):
+        """Return clean item name from image receipt description."""
+        name = (description or "").strip()
+        if not name:
+            return "Receipt Item"
+
+        # Legacy rows may have "Item | Qty: x | Unit: y"
+        name = name.split("|")[0].strip()
+        name = re.sub(r"\bqty\s*:\s*[0-9]+(?:\.[0-9]+)?\b", " ", name, flags=re.IGNORECASE)
+        name = re.sub(r"\bquantity\s*:\s*[0-9]+(?:\.[0-9]+)?\b", " ", name, flags=re.IGNORECASE)
+        name = re.sub(r"\bunit\s*:\s*[0-9]+(?:\.[0-9]+)?\b", " ", name, flags=re.IGNORECASE)
+        name = re.sub(r"\s{2,}", " ", name).strip(" |-")
+        return name or "Receipt Item"
+
+    def _description_for_excel(self, description, category=None, source=None):
+        """Description output strategy for Excel sheets."""
+        if (source or "").strip().lower() == "image":
+            return self._extract_image_item_name(description)
+        return self._extract_pattern_names(description, category)
 
     def _parse_to_ist(self, date_str):
         """Parse ISO datetime string (assumed UTC if naive) and convert to IST."""
@@ -85,7 +110,7 @@ class ExcelExporter:
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount
-            ws[f'E{row_idx}'] = description
+            ws[f'E{row_idx}'] = self._description_for_excel(description, category, source)
             ws[f'F{row_idx}'] = source if source else "text"
             
             # Format currency column
@@ -96,12 +121,12 @@ class ExcelExporter:
                 ws[f'{col}{row_idx}'].border = self.thin_border
         
         # Auto-adjust column widths
-        ws.column_dimensions['A'].width = 10
-        ws.column_dimensions['B'].width = 24
-        ws.column_dimensions['C'].width = 20
-        ws.column_dimensions['D'].width = 16
-        ws.column_dimensions['E'].width = 45
-        ws.column_dimensions['F'].width = 16
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 28
+        ws.column_dimensions['C'].width = 24
+        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['E'].width = 60
+        ws.column_dimensions['F'].width = 20
         
         # Add summary sheet
         self._add_summary_sheet(wb, user_id, expenses)
@@ -175,10 +200,10 @@ class ExcelExporter:
             ws[f'{col}{total_row}'].border = self.thin_border
         
         # Column widths
-        ws.column_dimensions['A'].width = 22
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 20
-        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['A'].width = 26
+        ws.column_dimensions['B'].width = 24
+        ws.column_dimensions['C'].width = 24
+        ws.column_dimensions['D'].width = 24
         
         # Add detailed transactions sheet
         self._add_detailed_sheet(wb, all_expenses)
@@ -262,10 +287,10 @@ class ExcelExporter:
             ws[f'{col}{total_row}'].border = self.thin_border
         
         # Column widths
-        ws.column_dimensions['A'].width = 22
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 16
-        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['A'].width = 26
+        ws.column_dimensions['B'].width = 24
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 24
         
         # Add detailed transactions sheet
         self._add_detailed_sheet(wb, all_expenses, sheet_name=f"Details - {days}d")
@@ -282,6 +307,98 @@ class ExcelExporter:
         # Add pattern summary sheet for this period
         self._add_pattern_summary_sheet(wb, all_expenses, sheet_name=f"Pattern Summary {days}d")
         
+        wb.save(filename)
+        return filename
+
+    def export_date_range(self, user_id, start_date, end_date, filename=None):
+        """Export expenses for a custom inclusive date range (YYYY-MM-DD to YYYY-MM-DD)."""
+        if not filename:
+            start_token = start_date.replace("-", "")
+            end_token = end_date.replace("-", "")
+            filename = f"expenses_range_{start_token}_{end_token}_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Custom Range"
+
+        all_expenses = self.db.get_expenses_date_range(user_id, start_date, end_date)
+        summary = self.db.get_summary_date_range(user_id, start_date, end_date)
+
+        if not all_expenses:
+            ws['A1'] = f"No expenses found between {start_date} and {end_date}"
+            wb.save(filename)
+            return filename
+
+        ws['A1'] = f"Expense Summary - {start_date} to {end_date}"
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        ws['A1'].font = Font(bold=True, size=14, color="FFFFFF")
+
+        ws['A3'] = "Category"
+        ws['B3'] = "Total"
+        ws['C3'] = "Count"
+        ws['D3'] = "Avg/Item"
+
+        for col in ['A', 'B', 'C', 'D']:
+            ws[f'{col}3'].font = Font(bold=True)
+            ws[f'{col}3'].fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+            ws[f'{col}3'].border = self.thin_border
+
+        total_sum = 0
+        for row_idx, (category, total, count) in enumerate(summary, start=4):
+            avg = total / count if count > 0 else 0
+            ws[f'A{row_idx}'] = category
+            ws[f'B{row_idx}'] = total
+            ws[f'C{row_idx}'] = count
+            ws[f'D{row_idx}'] = avg
+            total_sum += total
+
+            ws[f'B{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
+            ws[f'D{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
+
+            for col in ['A', 'B', 'C', 'D']:
+                ws[f'{col}{row_idx}'].border = self.thin_border
+
+        total_row = len(summary) + 4
+        ws[f'A{total_row}'] = "TOTAL"
+        ws[f'A{total_row}'].font = Font(bold=True)
+        ws[f'B{total_row}'] = total_sum
+        ws[f'B{total_row}'].font = Font(bold=True)
+        ws[f'B{total_row}'].number_format = f'"{CURRENCY}"#,##0.00'
+        ws[f'B{total_row}'].fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+
+        for col in ['A', 'B']:
+            ws[f'{col}{total_row}'].border = self.thin_border
+
+        ws.column_dimensions['A'].width = 26
+        ws.column_dimensions['B'].width = 24
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 24
+
+        self._add_detailed_sheet(wb, all_expenses, sheet_name="Details - Range")
+        self._add_bill_totals_sheet(
+            wb,
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            sheet_name="Bill Totals Range",
+        )
+        self._add_bill_analysis_sheet(
+            wb,
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            sheet_name="Bill Analysis Range",
+        )
+        self._add_bill_items_sheet(
+            wb,
+            user_id,
+            start_date=start_date,
+            end_date=end_date,
+            sheet_name="Bill Items Range",
+        )
+        self._add_pattern_summary_sheet(wb, all_expenses, sheet_name="Pattern Summary Range")
+
         wb.save(filename)
         return filename
     
@@ -348,9 +465,9 @@ class ExcelExporter:
             ws[f'C{row_idx}'] = count
             ws[f'B{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
         
-        ws.column_dimensions['A'].width = 26
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['B'].width = 24
+        ws.column_dimensions['C'].width = 18
     
     def _add_monthly_breakdown(self, wb, user_id, expenses):
         """Add monthly breakdown sheet"""
@@ -382,8 +499,8 @@ class ExcelExporter:
             ws[f'B{row_idx}'] = total
             ws[f'B{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
         
-        ws.column_dimensions['A'].width = 20
-        ws.column_dimensions['B'].width = 20
+        ws.column_dimensions['A'].width = 24
+        ws.column_dimensions['B'].width = 24
     
     def _add_detailed_sheet(self, wb, expenses, sheet_name="Detailed"):
         """Add detailed transactions sheet"""
@@ -406,7 +523,7 @@ class ExcelExporter:
             ws[f'B{row_idx}'] = date_obj.strftime("%d-%m-%Y %H:%M")
             ws[f'C{row_idx}'] = category
             ws[f'D{row_idx}'] = amount
-            ws[f'E{row_idx}'] = description
+            ws[f'E{row_idx}'] = self._description_for_excel(description, category, source)
             ws[f'F{row_idx}'] = source if source else "text"
             
             ws[f'D{row_idx}'].number_format = f'"{CURRENCY}"#,##0.00'
@@ -414,12 +531,12 @@ class ExcelExporter:
             for col in ['A', 'B', 'C', 'D', 'E', 'F']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
         
-        ws.column_dimensions['A'].width = 10
-        ws.column_dimensions['B'].width = 24
-        ws.column_dimensions['C'].width = 20
-        ws.column_dimensions['D'].width = 16
-        ws.column_dimensions['E'].width = 50
-        ws.column_dimensions['F'].width = 16
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 28
+        ws.column_dimensions['C'].width = 24
+        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['E'].width = 60
+        ws.column_dimensions['F'].width = 20
 
     def _add_pattern_summary_sheet(self, wb, expenses, sheet_name="Pattern Summary"):
         """Add summary of extracted pattern names with amount/count."""
@@ -461,11 +578,11 @@ class ExcelExporter:
             for col in ['A', 'B', 'C']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
 
-        ws.column_dimensions['A'].width = 32
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 12
+        ws.column_dimensions['A'].width = 38
+        ws.column_dimensions['B'].width = 24
+        ws.column_dimensions['C'].width = 16
 
-    def _add_bill_totals_sheet(self, wb, user_id, days=None, sheet_name="Bill Totals"):
+    def _add_bill_totals_sheet(self, wb, user_id, days=None, start_date=None, end_date=None, sheet_name="Bill Totals"):
         """Add bill totals sheet with only subtotal/total/grand total pattern rows."""
         ws = wb.create_sheet(sheet_name)
 
@@ -479,7 +596,12 @@ class ExcelExporter:
         }
 
         bill_rows = []
-        for date, _, description, amount, source, _ in self._get_bill_analysis_rows(user_id, days=days):
+        for date, _, description, amount, source, _ in self._get_bill_analysis_rows(
+            user_id,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        ):
             key = (description or "").strip().lower()
             pattern_name = pattern_map.get(key)
             if not pattern_name:
@@ -511,19 +633,29 @@ class ExcelExporter:
             for col in ['A', 'B', 'C', 'D']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
 
-        ws.column_dimensions['A'].width = 24
-        ws.column_dimensions['B'].width = 22
-        ws.column_dimensions['C'].width = 16
-        ws.column_dimensions['D'].width = 16
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 26
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 20
 
-    def _get_bill_analysis_rows(self, user_id, days=None):
+    def _get_bill_analysis_rows(self, user_id, days=None, start_date=None, end_date=None):
         """Fetch bill-analysis entries from DB (bill subtotal/total labels)."""
         conn = sqlite3.connect(self.db.db_path)
         cursor = conn.cursor()
 
         labels = ("bill subtotal", "bill total", "bill grand total", "bill amount")
 
-        if days:
+        if start_date and end_date:
+            query = """
+                SELECT date, category, description, amount, source, transaction_id
+                FROM expenses
+                WHERE user_id = ?
+                  AND lower(COALESCE(description, '')) IN (?, ?, ?, ?)
+                  AND date(date) BETWEEN date(?) AND date(?)
+                ORDER BY date DESC, id DESC
+            """
+            cursor.execute(query, (user_id, *labels, start_date, end_date))
+        elif days:
             query = """
                 SELECT date, category, description, amount, source, transaction_id
                 FROM expenses
@@ -547,13 +679,24 @@ class ExcelExporter:
         conn.close()
         return rows
 
-    def _get_bill_item_rows(self, user_id, days=None):
+    def _get_bill_item_rows(self, user_id, days=None, start_date=None, end_date=None):
         """Fetch item-level receipt rows (excluding bill subtotal/total meta labels)."""
         conn = sqlite3.connect(self.db.db_path)
         cursor = conn.cursor()
 
         labels = ("bill subtotal", "bill total", "bill grand total", "bill amount")
-        if days:
+        if start_date and end_date:
+            query = """
+                SELECT date, category, description, amount, source, transaction_id
+                FROM expenses
+                WHERE user_id = ?
+                  AND source = 'image'
+                  AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
+                  AND date(date) BETWEEN date(?) AND date(?)
+                ORDER BY date DESC, id DESC
+            """
+            cursor.execute(query, (user_id, *labels, start_date, end_date))
+        elif days:
             query = """
                 SELECT date, category, description, amount, source, transaction_id
                 FROM expenses
@@ -579,10 +722,15 @@ class ExcelExporter:
         conn.close()
         return rows
 
-    def _add_bill_items_sheet(self, wb, user_id, days=None, sheet_name="Bill Items"):
+    def _add_bill_items_sheet(self, wb, user_id, days=None, start_date=None, end_date=None, sheet_name="Bill Items"):
         """Add item-level receipt sheet with quantity, category, and amount."""
         ws = wb.create_sheet(sheet_name)
-        rows = self._get_bill_item_rows(user_id, days=days)
+        rows = self._get_bill_item_rows(
+            user_id,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         if not rows:
             ws['A1'] = "No bill item entries found"
@@ -620,18 +768,23 @@ class ExcelExporter:
             for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
 
-        ws.column_dimensions['A'].width = 24
-        ws.column_dimensions['B'].width = 30
-        ws.column_dimensions['C'].width = 36
-        ws.column_dimensions['D'].width = 10
-        ws.column_dimensions['E'].width = 20
-        ws.column_dimensions['F'].width = 16
-        ws.column_dimensions['G'].width = 14
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 34
+        ws.column_dimensions['C'].width = 44
+        ws.column_dimensions['D'].width = 12
+        ws.column_dimensions['E'].width = 24
+        ws.column_dimensions['F'].width = 20
+        ws.column_dimensions['G'].width = 18
 
-    def _add_bill_analysis_sheet(self, wb, user_id, days=None, sheet_name="Bill Analysis"):
+    def _add_bill_analysis_sheet(self, wb, user_id, days=None, start_date=None, end_date=None, sheet_name="Bill Analysis"):
         """Add bill analysis sheet with Category + Subtotal/Total/Grand Total/Amount."""
         ws = wb.create_sheet(sheet_name)
-        rows = self._get_bill_analysis_rows(user_id, days=days)
+        rows = self._get_bill_analysis_rows(
+            user_id,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         if not rows:
             ws['A1'] = "No bill analysis entries found"
@@ -688,11 +841,11 @@ class ExcelExporter:
             for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
                 ws[f'{col}{row_idx}'].border = self.thin_border
 
-        ws.column_dimensions['A'].width = 24
-        ws.column_dimensions['B'].width = 24
-        ws.column_dimensions['C'].width = 16
-        ws.column_dimensions['D'].width = 16
-        ws.column_dimensions['E'].width = 18
-        ws.column_dimensions['F'].width = 16
-        ws.column_dimensions['G'].width = 14
-        ws.column_dimensions['H'].width = 30
+        ws.column_dimensions['A'].width = 28
+        ws.column_dimensions['B'].width = 28
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['E'].width = 22
+        ws.column_dimensions['F'].width = 20
+        ws.column_dimensions['G'].width = 18
+        ws.column_dimensions['H'].width = 34

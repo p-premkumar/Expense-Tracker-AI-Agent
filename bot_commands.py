@@ -2,6 +2,7 @@
 Telegram bot command handlers
 """
 import os
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import ExpenseDatabase
@@ -11,6 +12,24 @@ from excel_exporter import ExcelExporter
 
 db = ExpenseDatabase()
 exporter = ExcelExporter()
+
+
+def _parse_positive_amount(raw_value):
+    """Parse amount strings like '500', '1,500', '₹500' into positive float."""
+    if raw_value is None:
+        raise ValueError("missing")
+
+    cleaned = str(raw_value).strip()
+    cleaned = re.sub(r"(?i)\b(?:rs|inr)\.?\b", "", cleaned)
+    cleaned = cleaned.replace(",", "")
+    cleaned = cleaned.replace("₹", "").replace("$", "")
+    # Keep only numeric signs/decimal separator.
+    cleaned = re.sub(r"[^0-9.\-]", "", cleaned).strip()
+
+    amount = float(cleaned)
+    if amount <= 0:
+        raise ValueError("non_positive")
+    return amount
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start command handler"""
@@ -57,10 +76,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /stats - Detailed statistics
 
 *BUDGET MANAGEMENT:*
-/setdaily <amount> - Set daily budget limit
-/setweekly <amount> - Set weekly budget limit  
-/setmonthly <amount> - Set monthly budget limit
-/limits - View current budget status
+/setdaily or /set_daily <amount> - Set daily budget limit
+/setweekly or /set_weekly <amount> - Set weekly budget limit  
+/setmonthly or /set_monthly <amount> - Set monthly budget limit
+/limits or /limit - View current budget status
 
 *REPORTS:*
 /week - Weekly report with breakdown
@@ -71,6 +90,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /exporttoday or /export_today - Excel export (today)
 /exportweekly or /export_weekly - Excel export (last 7 days)
 /exportmonthly or /export_monthly - Excel export (last 30 days)
+/exportrange <start> <end> - Excel export (custom range, YYYY-MM-DD)
 /exportcsv or /export_csv - CSV format export
 /pdf - PDF export (last 30 days)
 /graph - Graph visualization (last 30 days)
@@ -320,52 +340,105 @@ async def export_today_data(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except Exception as e:
         await update.message.reply_text(f"❌ Error generating report: {str(e)}")
 
+async def export_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export expenses to Excel for a custom date range."""
+    user_id = update.effective_user.id
+    if len(context.args) != 2:
+        await update.message.reply_text(
+            "\u274c Usage: /exportrange <start_date> <end_date>\n"
+            "\U0001F4C5 Example: /exportrange 2026-02-01 2026-02-23",
+            parse_mode='Markdown'
+        )
+        return
+    start_date = context.args[0].strip()
+    end_date = context.args[1].strip()
+    try:
+        start_obj = datetime.strptime(start_date, "%Y-%m-%d")
+        end_obj = datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        await update.message.reply_text(
+            "\u274c Invalid date format.\n"
+            "\U0001F4C5 Use YYYY-MM-DD.\n"
+            "Example: /exportrange 2026-02-01 2026-02-23",
+            parse_mode='Markdown'
+        )
+        return
+    if start_obj > end_obj:
+        await update.message.reply_text("\u274c Start date must be before or equal to end date.")
+        return
+    await update.message.reply_text(
+        f"\U0001F4CA Generating custom range report...\n"
+        f"\U0001F4C5 Period: {start_date} to {end_date}",
+        parse_mode='Markdown'
+    )
+    try:
+        filename = exporter.export_date_range(user_id, start_date, end_date)
+        with open(filename, 'rb') as excel_file:
+            await update.message.reply_document(
+                document=excel_file,
+                caption=(
+                    f"\U0001F4CA **Custom Range Expense Report**\n\n"
+                    f"\U0001F4C5 Period: {start_date} to {end_date}\n"
+                    f"\U0001F552 Generated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}"
+                ),
+                parse_mode='Markdown'
+            )
+        if os.path.exists(filename):
+            os.remove(filename)
+        await update.message.reply_text("\u2705 Custom range report exported successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"\u274c Error generating custom range report: {str(e)}")
+
 # ===== BUDGET LIMIT COMMANDS =====
 
 async def set_daily_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set daily budget limit"""
     user_id = update.effective_user.id
-    
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /setdaily <amount>\nExample: `/setdaily 500`", parse_mode='Markdown')
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "\u274c Usage: /setdaily or /set_daily <amount>\nExample: /setdaily 500"
+        )
         return
-    
     try:
-        amount = float(context.args[0])
+        amount = _parse_positive_amount(context.args[0])
         db.set_budget_limit(user_id, 'daily', amount)
-        await update.message.reply_text(f"✅ Daily limit set to {CURRENCY}{amount:.2f}")
+        await update.message.reply_text(f"\u2705 Daily limit set to {CURRENCY}{amount:.2f}")
     except ValueError:
-        await update.message.reply_text("❌ Invalid amount. Please enter a number.")
-
+        await update.message.reply_text(
+            "\u274c Invalid amount. Enter a positive number (example: 500 or 1,500)."
+        )
 async def set_weekly_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set weekly budget limit"""
     user_id = update.effective_user.id
-    
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /setweekly <amount>\nExample: `/setweekly 3500`", parse_mode='Markdown')
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "\u274c Usage: /setweekly or /set_weekly <amount>\nExample: /setweekly 3500"
+        )
         return
-    
     try:
-        amount = float(context.args[0])
+        amount = _parse_positive_amount(context.args[0])
         db.set_budget_limit(user_id, 'weekly', amount)
-        await update.message.reply_text(f"✅ Weekly limit set to {CURRENCY}{amount:.2f}")
+        await update.message.reply_text(f"\u2705 Weekly limit set to {CURRENCY}{amount:.2f}")
     except ValueError:
-        await update.message.reply_text("❌ Invalid amount. Please enter a number.")
-
+        await update.message.reply_text(
+            "\u274c Invalid amount. Enter a positive number (example: 3500 or 3,500)."
+        )
 async def set_monthly_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set monthly budget limit"""
     user_id = update.effective_user.id
-    
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /setmonthly <amount>\nExample: `/setmonthly 15000`", parse_mode='Markdown')
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "\u274c Usage: /setmonthly or /set_monthly <amount>\nExample: /setmonthly 15000"
+        )
         return
-    
     try:
-        amount = float(context.args[0])
+        amount = _parse_positive_amount(context.args[0])
         db.set_budget_limit(user_id, 'monthly', amount)
-        await update.message.reply_text(f"✅ Monthly limit set to {CURRENCY}{amount:.2f}")
+        await update.message.reply_text(f"\u2705 Monthly limit set to {CURRENCY}{amount:.2f}")
     except ValueError:
-        await update.message.reply_text("❌ Invalid amount. Please enter a number.")
+        await update.message.reply_text(
+            "\u274c Invalid amount. Enter a positive number (example: 15000 or 15,000)."
+        )
 
 def get_limit_status(current, limit):
     """Get budget warning status"""
@@ -392,10 +465,9 @@ async def check_limits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not any([daily_limit, weekly_limit, monthly_limit]):
         await update.message.reply_text(
             "❌ No limits set.\n\nSet limits using:\n"
-            "/setdaily <amount>\n"
-            "/setweekly <amount>\n"
-            "/setmonthly <amount>",
-            parse_mode='Markdown'
+            "/setdaily or /set_daily <amount>\n"
+            "/setweekly or /set_weekly <amount>\n"
+            "/setmonthly or /set_monthly <amount>"
         )
         return
     
@@ -632,3 +704,11 @@ async def export_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     finally:
         if 'filename' in locals() and os.path.exists(filename):
             os.remove(filename)
+
+
+
+
+
+
+
+

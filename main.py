@@ -31,6 +31,7 @@ from bot_commands import (
     export_monthly,
     export_weekly,
     export_today_data,
+    export_date_range,
     set_daily_limit,
     set_weekly_limit,
     set_monthly_limit,
@@ -377,23 +378,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if item_amount is None:
                 continue
 
-            quantity = None
-            if quantity_value is not None and quantity_value > 0:
-                quantity = int(quantity_value) if float(quantity_value).is_integer() else quantity_value
-
             if item_category != "Other" and item_category not in category_values:
                 category_values.append(item_category)
-
-            description_parts = [item_name]
-            if quantity is not None:
-                description_parts.append(f"Qty: {quantity}")
-            if unit_price is not None:
-                description_parts.append(f"Unit: {unit_price:.2f}")
 
             parsed_items.append({
                 "amount": item_amount,
                 "category": item_category,
-                "description": " | ".join(description_parts),
+                "description": item_name,
             })
 
         if not category_values and ocr_text:
@@ -462,10 +453,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         lines = [
             "Bill analysis:",
             f"Category: {bill_category}",
-            f"Subtotal: {CURRENCY}{subtotal:.2f}" if subtotal else "Subtotal: N/A",
             f"Total: {CURRENCY}{total:.2f}" if total else "Total: N/A",
-            f"Grand Total: {CURRENCY}{grand_total:.2f}" if grand_total else "Grand Total: N/A",
-            f"Amount: {CURRENCY}{chosen_amount:.2f}",
             f"Items Saved: {saved_item_count}",
         ]
         await update.message.reply_text("\n".join(lines))
@@ -707,15 +695,16 @@ def main():
     application.add_handler(CommandHandler(["export_monthly", "exportmonthly"], export_monthly))
     application.add_handler(CommandHandler(["export_weekly", "exportweekly"], export_weekly))
     application.add_handler(CommandHandler(["export_today", "exporttoday"], export_today_data))
+    application.add_handler(CommandHandler(["exportrange", "export_range"], export_date_range))
     application.add_handler(CommandHandler(["export_csv", "exportcsv"], export_csv))
     application.add_handler(CommandHandler("pdf", export_pdf))
     application.add_handler(CommandHandler("graph", export_graph))
     
     # Budget limit commands
-    application.add_handler(CommandHandler("setdaily", set_daily_limit))
-    application.add_handler(CommandHandler("setweekly", set_weekly_limit))
-    application.add_handler(CommandHandler("setmonthly", set_monthly_limit))
-    application.add_handler(CommandHandler("limits", check_limits))
+    application.add_handler(CommandHandler(["setdaily", "set_daily"], set_daily_limit))
+    application.add_handler(CommandHandler(["setweekly", "set_weekly"], set_weekly_limit))
+    application.add_handler(CommandHandler(["setmonthly", "set_monthly"], set_monthly_limit))
+    application.add_handler(CommandHandler(["limits", "limit"], check_limits))
     
     # Report commands
     application.add_handler(CommandHandler("week", report_week))

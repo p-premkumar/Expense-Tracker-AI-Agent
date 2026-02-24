@@ -55,6 +55,99 @@ class ExpenseParser:
 
         return amount, category, description
 
+    def is_valid_expense(self, amount, category):
+        """Validate parsed expense fields."""
+        try:
+            value = float(amount)
+        except (TypeError, ValueError):
+            return False
+
+        if value <= 0 or value >= 1000000:
+            return False
+
+        if not category:
+            return False
+
+        category_lower = str(category).strip().lower()
+        allowed = {name.lower() for name in EXPENSE_CATEGORIES}
+        return category_lower in allowed
+
+    def parse_multiple_expenses(self, text):
+        """
+        Parse multiple expense items from multiline input.
+        Returns a list of tuples: (amount, category, description)
+        """
+        text = (text or "").strip()
+        if not text:
+            return []
+
+        expenses = []
+        item_blocks = []
+
+        # Strong separators used in many OCR/manual lists.
+        if "---" in text or "===" in text:
+            blocks = re.split(r'---+|===+', text)
+            item_blocks = [block.strip() for block in blocks if block.strip()]
+        else:
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            lines_with_numbers = sum(1 for line in lines if re.search(r'\d', line))
+
+            # Common case: one expense per line.
+            if lines_with_numbers >= 2 and len(lines) >= 2:
+                item_blocks = lines
+            else:
+                item_blocks = [text]
+
+        for block in item_blocks:
+            amount, category, description = self.parse_expense(block)
+            if not category:
+                category = "Other"
+            if self.is_valid_expense(amount, category):
+                expenses.append((amount, category, description or block))
+
+        return expenses
+
+    def extract_bill_totals(self, text):
+        """
+        Extract subtotal/total/grand_total values from receipt text.
+        Returns dict: {"subtotal": float|None, "total": float|None, "grand_total": float|None}
+        """
+        text = text or ""
+        totals = {
+            "subtotal": None,
+            "total": None,
+            "grand_total": None,
+        }
+
+        if not text.strip():
+            return totals
+
+        def _line_amount(line):
+            numbers = re.findall(r'(\d+(?:[.,]\d{1,2})?)', line)
+            if not numbers:
+                return None
+            # Right-most value is usually the payable value in receipts.
+            return self._parse_amount_string(numbers[-1])
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            lowered = line.lower()
+            amount = _line_amount(line)
+            if amount is None:
+                continue
+
+            if "grand total" in lowered:
+                totals["grand_total"] = amount
+            elif "subtotal" in lowered or "sub total" in lowered:
+                totals["subtotal"] = amount
+            elif re.search(r'\btotal\b', lowered) and "sub" not in lowered and "grand" not in lowered:
+                totals["total"] = amount
+
+        return totals
+
     def _extract_pattern_keyword(self, text_lower, category=None):
         """Return matched keyword from EXPENSE_PATTERNS, preferring the given category."""
         if not text_lower:

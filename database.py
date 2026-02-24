@@ -133,6 +133,25 @@ class ExpenseDatabase:
         expenses = cursor.fetchall()
         conn.close()
         return expenses
+
+    def get_expenses_date_range(self, user_id, start_date, end_date):
+        """Get expenses for a user within an inclusive date range (YYYY-MM-DD)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
+
+        query = '''
+            SELECT id, amount, category, description, date, source
+            FROM expenses
+            WHERE user_id = ?
+              AND date(date) BETWEEN date(?) AND date(?)
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
+            ORDER BY date DESC
+        '''
+        cursor.execute(query, (user_id, start_date, end_date, *excluded))
+        expenses = cursor.fetchall()
+        conn.close()
+        return expenses
     
     def get_summary(self, user_id, days=30):
         """Get expense summary by category"""
@@ -150,6 +169,26 @@ class ExpenseDatabase:
             ORDER BY total DESC
         '''
         cursor.execute(query, (user_id, days, *excluded))
+        summary = cursor.fetchall()
+        conn.close()
+        return summary
+
+    def get_summary_date_range(self, user_id, start_date, end_date):
+        """Get expense summary by category within an inclusive date range (YYYY-MM-DD)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        excluded = self.BILL_META_DESCRIPTIONS
+
+        query = '''
+            SELECT category, SUM(amount) as total, COUNT(*) as count
+            FROM expenses
+            WHERE user_id = ?
+              AND date(date) BETWEEN date(?) AND date(?)
+              AND lower(COALESCE(description, '')) NOT IN (?, ?, ?, ?)
+            GROUP BY category
+            ORDER BY total DESC
+        '''
+        cursor.execute(query, (user_id, start_date, end_date, *excluded))
         summary = cursor.fetchall()
         conn.close()
         return summary
