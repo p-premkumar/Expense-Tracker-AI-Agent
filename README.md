@@ -1,363 +1,351 @@
-# 🎉 Telegram Expense Tracker AI Agent - READY TO USE!
+# 💸 Expense Tracker AI Agent
 
-## ✅ Project Complete
-
-Your **Telegram Expense Tracker AI Agent** is now fully built and ready to deploy!
+A feature-rich Telegram bot that helps you track daily expenses using natural language, receipt photos, voice messages, and payment screenshots — with Excel, PDF, CSV, and graph export support.
 
 ---
 
-## 📦 What You Have
+## ✨ Features
 
-### ✨ Complete Bot Features
-- 🤖 **Natural Language Processing** - Understands "Spent 150 for biriyani"
-- 📸 **Receipt OCR** - Extract expenses from photos
-- 📊 **Smart Analytics** - Weekly/monthly summaries
-- 💾 **SQLite Database** - Local data storage
-- 🏷️ **Auto-categorization** - 10 expense categories
-- 📱 **Telegram Commands** - 10+ useful commands
-- 💬 **Multiple Input Methods** - Text, photos, screenshots
-
-### 📚 Complete Documentation
-- [README.md](README.md) - Full feature guide
-- [QUICKSTART.md](QUICKSTART.md) - 5-minute setup
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Production deployment
-- [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) - Technical details
-- [INDEX.md](INDEX.md) - Navigation guide
-
-### 🔧 Ready-to-Run Code
-- [main.py](main.py) - Bot entry point
-- [bot_commands.py](bot_commands.py) - All commands implemented
-- [nlp_processor.py](nlp_processor.py) - NLP & OCR processing
-- [database.py](database.py) - Data management
-- [config.py](config.py) - Easy configuration
-- [analytics.py](analytics.py) - Advanced features
-
-### 🧪 Testing & Diagnostics
-- [test_parser.py](test_parser.py) - Test NLP parser
-- [startup.py](startup.py) - Verify setup
+- **Natural Language Parsing** — Send messages like `"Spent 150 for biriyani"` and the bot extracts the amount and category automatically.
+- **Receipt Photo OCR** — Photograph a receipt and the bot extracts individual line items, subtotals, taxes, and totals.
+- **Voice Messages** — Describe an expense by voice; the bot transcribes and records it.
+- **Payment Screenshots** — Upload UPI/bank screenshots with a caption to log online payments.
+- **Budget Limits** — Set daily, weekly, and monthly spending limits with automatic warnings at 75%, 90%, and 100%.
+- **Export Options** — Export your data as Excel (.xlsx), CSV, PDF, or a category-wise spending graph.
+- **Multi-Item Receipts** — Supports bulk entry (one expense per line) in a single message.
+- **Detailed Analytics** — Weekly/monthly summaries, daily averages, category breakdowns.
 
 ---
 
-## 🚀 Get Started in 3 Steps
+## 🗂️ Project Structure
 
-### Step 1: Install Dependencies
+```
+expense-tracker-bot/
+├── main.py                   # Bot entry point & message handlers
+├── bot_commands.py           # All Telegram command handlers
+├── database.py               # SQLite database layer
+├── nlp_processor.py          # NLP parsing, OCR, voice processing
+├── gemini_processor.py       # Google Gemini AI receipt analysis
+├── excel_exporter.py         # Excel (.xlsx) export engine
+├── ocr_config.py             # OCR method selection & fallback logic
+├── analytics.py              # Advanced analytics utilities
+├── config.py                 # Configuration & constants
+├── add_expenses.py           # Bulk expense import script
+├── extract_receipt_text.py   # CLI receipt text extractor
+├── initialize_easyocr.py     # EasyOCR model pre-loader
+├── startup.py                # Dependency & config diagnostics
+├── requirements.txt          # Python dependencies
+└── tests/
+    ├── test_parser.py
+    ├── test_multi_item_receipt.py
+    ├── test_receipt_analysis.py
+    ├── test_budget_features.py
+    ├── test_excel_export.py
+    ├── test_voice_features.py
+    ├── test_alternative_methods.py
+    └── test_simple_extract.py
+```
+
+---
+
+## ⚙️ Setup & Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/your-username/expense-tracker-bot.git
+cd expense-tracker-bot
+```
+
+### 2. Install Python dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 2: Run Diagnostic Check
+### 3. Configure environment variables
+
+Create a `.env` file in the project root:
+
+```env
+GEMINI_API_KEY=your_google_gemini_api_key_here
+OCR_METHOD=tesseract   # Options: tesseract | easyocr | paddleocr
+```
+
+> **Note:** The Telegram Bot Token is currently hardcoded in `config.py`. For production use, move it to your `.env` file and load it with `os.getenv("BOT_TOKEN")`.
+
+### 4. (Optional) Install an OCR engine
+
+| Method | Command | Notes |
+|---|---|---|
+| **Tesseract** | [Download installer](https://github.com/UB-Mannheim/tesseract/wiki) | Requires system software |
+| **EasyOCR** | `pip install easyocr` | Downloads ~200 MB model on first run |
+| **PaddleOCR** | `pip install paddleocr paddlepaddle` | Fastest option |
+
+Pre-load the EasyOCR model (avoids delay on first receipt scan):
+
+```bash
+python initialize_easyocr.py
+```
+
+### 5. Run the bot
+
+```bash
+python main.py
+```
+
+### 6. Verify your setup
+
 ```bash
 python startup.py
 ```
 
-### Step 3: Start the Bot
-```bash
-python main.py
-```
-
-Then open Telegram, find the bot, and send `/start`
-
 ---
 
-## 💡 What the Bot Does
+## 🤖 Bot Commands
 
-### User sends:
-```
-"Spent 150 for biriyani"
-```
+### Viewing Expenses
 
-### Bot responds:
-```
-✅ Expense Recorded!
-💰 Amount: ₹150.00
-🏷️ Category: Food
-📝 Description: Spent 150 for biriyani
-```
-
-### User commands:
-```
-/summary  →  Last 30 days breakdown by category
-/weekly   →  Last 7 days summary
-/today    →  Today's total
-/list     →  Last 10 expenses
-/stats    →  Detailed statistics
-```
-
----
-
-## 🎯 Bot Token
-
-**Your Bot Token:**
-```
-8140750596:AAEaSEXVus7m1_3iVhQ7BXDtA4uu-YEzyno
-```
-
-This is already configured in [config.py](config.py)
-
----
-
-## 📂 Project Structure
-
-```
-Expense Tracer AI Agent/
-├── 📖 START HERE
-│   ├── QUICKSTART.md         ← Read this first!
-│   ├── INDEX.md              ← Navigation guide
-│   └── README.md             ← Full documentation
-│
-├── 🤖 Run the Bot
-│   ├── main.py               ← python main.py
-│   ├── startup.py            ← python startup.py
-│   └── test_parser.py        ← python test_parser.py
-│
-├── 💻 Core Code
-│   ├── bot_commands.py       (All 10 commands)
-│   ├── nlp_processor.py      (NLP + OCR)
-│   ├── database.py           (SQLite)
-│   ├── config.py             (Settings)
-│   └── analytics.py          (Advanced)
-│
-├── 📚 Configuration
-│   ├── requirements.txt      (Dependencies)
-│   ├── .env                  (Environment)
-│   └── config.py             (Settings)
-│
-└── 📋 Guides
-    ├── QUICKSTART.md         (5-minute setup)
-    ├── DEPLOYMENT.md         (Production)
-    ├── PROJECT_SUMMARY.md    (Technical)
-    └── INDEX.md              (Navigation)
-```
-
----
-
-## 🎓 Key Commands Available
-
-| Command | What It Does |
-|---------|-------------|
-| `/start` | Welcome & help |
-| `/help` | Show all commands |
+| Command | Description |
+|---|---|
 | `/summary` | Last 30 days by category |
 | `/weekly` | Last 7 days summary |
 | `/monthly` | Last 30 days summary |
-| `/today` | Today's spending |
-| `/categories` | Show all categories |
-| `/list` | Last 10 expenses |
-| `/stats` | Detailed statistics |
-| `/delete` | Delete last expense |
+| `/today` | Today's total spending |
+| `/list` | Last 10 expense entries |
+| `/stats` | Detailed 7-day and 30-day statistics |
+| `/categories` | Show all supported categories |
+
+### Budget Management
+
+| Command | Description |
+|---|---|
+| `/setdaily <amount>` | Set a daily spending limit |
+| `/setweekly <amount>` | Set a weekly spending limit |
+| `/setmonthly <amount>` | Set a monthly spending limit |
+| `/limits` | View current budget status and usage |
+
+### Reports
+
+| Command | Description |
+|---|---|
+| `/week` | Weekly category report |
+| `/month` | Monthly category report |
+
+### Exporting Data
+
+| Command | Description |
+|---|---|
+| `/export` | All expenses → Excel |
+| `/exporttoday` | Today's expenses → Excel |
+| `/exportweekly` | Last 7 days → Excel |
+| `/exportmonthly` | Last 30 days → Excel |
+| `/exportrange <start> <end>` | Custom date range → Excel (format: `YYYY-MM-DD`) |
+| `/exportcsv` | All expenses → CSV |
+| `/pdf` | Last 30 days → PDF report |
+| `/graph` | Last 30 days → bar + pie chart image |
+
+### Managing Data
+
+| Command | Description |
+|---|---|
+| `/delete` | Delete the most recent expense |
+| `/help` | Full command reference |
 
 ---
 
-## 🧠 AI Features
+## 💬 Adding Expenses
 
-### Natural Language Understanding
-- Parses: "Spent 150 for biriyani"
-- Handles: Multiple number formats (₹, $, €)
-- Extracts: Amount + Category + Description
-- Validates: All data before storing
+### Text Messages
 
-### Smart Categorization
-- Food, Transport, Entertainment, Shopping
-- Utilities, Health, Education, Travel, Work
-- Keyword-based + Pattern matching
-- Accuracy: ~95%
+Send any natural language message:
 
-### Receipt Processing
-- Upload receipt photo
-- OCR extracts text
-- Parses amount & category
-- Stores with receipt metadata
+```
+Spent 150 for biriyani
+50 on transport
+Movie tickets 250
+Coffee 80
+```
 
----
+### Bulk Entry (Multiple Lines)
 
-## 📊 What Gets Tracked
+Send multiple expenses in a single message — one per line:
 
-✅ All expenses stored with:
-- **Amount** (any currency)
-- **Category** (auto-detected)
-- **Description** (full original text)
-- **Date/Time** (automatic)
-- **Source** (text/receipt)
+```
+Coffee 30
+Apple 150
+Tea 40
+Biriyani 150
+Petrol 150
+```
 
-✅ Analytics provided:
-- Daily totals
-- Weekly breakdown
-- Monthly summaries
-- Category-wise splits
-- Spending trends
+### Receipt Photos
 
----
+Send a photo of a paper receipt. The bot will:
+1. Extract all line items with quantities and prices.
+2. Detect subtotal, taxes, and grand total.
+3. Save each item individually with its inferred category.
 
-## 💾 Data Storage
+### Voice Messages
 
-- **Type:** SQLite database (local)
-- **Location:** `expenses.db` (auto-created)
-- **Privacy:** All data stays on your device
-- **No cloud:** No external servers
-- **Secure:** User isolation built-in
+Record a voice note describing your expense (e.g. *"Spent two hundred on groceries"*). The bot transcribes it using Google Speech API and logs the expense.
+
+### Payment Screenshots
+
+Send a payment confirmation screenshot with a caption containing payment details:
+
+```
+TXID: UPI123456789
+Account: HDFC Bank
+```
 
 ---
 
-## 🚀 Ready to Deploy?
+## 📂 Supported Categories
 
-### Local Testing (Now)
+| Category | Example Keywords |
+|---|---|
+| Food | biryani, pizza, lunch, dinner |
+| Transport | petrol, taxi, bus, metro, fuel |
+| Entertainment | movie, concert, game, show |
+| Shopping | clothes, shoes, gift, shirt |
+| Utilities | electricity, internet, phone, bill |
+| Health | medicine, doctor, hospital |
+| Education | book, course, tuition, training |
+| Travel | hotel, flight, trip, vacation |
+| Work | office, project, meeting |
+| Meat | chicken, fish, mutton, beef |
+| Vegetables | carrot, tomato, onion, potato |
+| Fruits | apple, banana, mango, grapes |
+| Hot Drinks | coffee, tea, cappuccino, latte |
+| Other | *(anything unrecognised)* |
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+Telegram User
+     │
+     ▼
+main.py  ──────────────────────────────────────────────────┐
+  │  handle_message()   (text / bulk)                      │
+  │  handle_photo()     (receipt / screenshot)             │
+  │  handle_voice()     (voice note)                       │
+  │                                                        │
+  ├──► nlp_processor.py                                    │
+  │      ExpenseParser      — amount & category extraction │
+  │      OCRProcessor       — Tesseract receipt OCR        │
+  │      EasyOCRProcessor   — EasyOCR receipt OCR          │
+  │      VoiceProcessor     — Google Speech transcription  │
+  │                                                        │
+  ├──► gemini_processor.py                                 │
+  │      GeminiProcessor    — Gemini AI receipt analysis   │
+  │                                                        │
+  ├──► database.py                                         │
+  │      ExpenseDatabase    — SQLite CRUD & queries        │
+  │                                                        │
+  ├──► bot_commands.py                                     │
+  │      Command handlers   — /summary, /export, etc.     │
+  │                                                        │
+  └──► excel_exporter.py                                   │
+         ExcelExporter      — Multi-sheet .xlsx reports    │
+```
+
+---
+
+## 🗃️ Database Schema
+
+The SQLite database (`expenses.db`) contains four tables:
+
+- **users** — Telegram user profiles
+- **expenses** — All recorded expense entries (amount, category, description, date, source, transaction_id, account_name, payment_method)
+- **categories** — User-defined category metadata
+- **budget_limits** — Per-user daily/weekly/monthly budget limits
+
+---
+
+## 📊 Excel Export Sheets
+
+Each exported `.xlsx` file contains multiple sheets for deep analysis:
+
+| Sheet | Contents |
+|---|---|
+| All Expenses / Custom Range | Full transaction list |
+| Summary | 7-day and 30-day totals by category |
+| Monthly Breakdown | Total spending per calendar month |
+| Detailed | Timestamped transaction detail |
+| Bill Totals | Receipt subtotal/total/grand total rows |
+| Bill Analysis | Per-receipt category and total breakdown |
+| Bill Items | Individual receipt line items with quantity |
+| Pattern Summary | Keyword-based spending patterns |
+
+---
+
+## 🧪 Running Tests
+
 ```bash
-python main.py
-# Test in Telegram
-# Send /start to bot
-```
+# Test NLP parser
+python test_parser.py
 
-### Home/Office Server
-Read [DEPLOYMENT.md](DEPLOYMENT.md) - Windows/Linux setup
+# Test multi-item receipt parsing
+python test_multi_item_receipt.py
 
-### Cloud Deployment
-Read [DEPLOYMENT.md](DEPLOYMENT.md) - AWS/GCP/Azure setup
+# Test receipt analysis
+python test_receipt_analysis.py
 
-### Docker Container
-Read [DEPLOYMENT.md](DEPLOYMENT.md) - Docker instructions
+# Test budget features
+python test_budget_features.py
 
----
+# Test Excel export
+python test_excel_export.py
 
-## 📝 Example Usage
+# Test OCR methods
+python test_alternative_methods.py
 
-### Adding Expenses (Just Type!)
-```
-"150 for biriyani"     → Food: ₹150
-"50 transport"         → Transport: ₹50
-"500 shopping"         → Shopping: ₹500
-"₹200 for movie"       → Entertainment: ₹200
-"Phone bill 1200"      → Utilities: ₹1,200
-```
-
-### Viewing Summaries
-```
-/summary   → Shows all categories + total
-/weekly    → Last 7 days breakdown
-/today     → How much you spent today
-/list      → Your last 10 transactions
-/stats     → Detailed analysis
-```
-
-### Uploading Receipts
-```
-[Send receipt photo]
-Bot extracts amount & category automatically
-Stores in database
-Confirms extraction
+# Test voice features
+python test_voice_features.py
 ```
 
 ---
 
-## 🔧 Customization
+## 🛠️ Bulk Import
 
-Want to customize? It's easy!
+To add multiple expenses programmatically (useful for testing or migration):
 
-### Add New Categories
-Edit [config.py](config.py):
-```python
-EXPENSE_CATEGORIES = [
-    "Food", "Transport", "YourCategory"
-]
-
-EXPENSE_PATTERNS = {
-    "yourcategory": ["keywords", "to", "detect"]
-}
-```
-
-### Change Currency
-Edit [config.py](config.py):
-```python
-CURRENCY = "$"  # or € or any symbol
-```
-
-### Add New Commands
-Edit [bot_commands.py](bot_commands.py) and [main.py](main.py)
-
----
-
-## 🆘 Troubleshooting
-
-### Bot won't start?
 ```bash
-python startup.py  # Check what's wrong
+python add_expenses.py
 ```
 
-### Parsing not working?
-```bash
-python test_parser.py  # Test NLP parser
-```
-
-### Need help?
-Read [README.md](README.md) Troubleshooting section
+Edit the `expenses` list and `user_id` inside the file before running.
 
 ---
 
-## 📋 Checklist
+## 📋 Requirements
 
-✅ Bot code - Complete
-✅ NLP processing - Complete
-✅ Database - Complete
-✅ Commands - 10/10 implemented
-✅ OCR support - Complete
-✅ Analytics - Complete
-✅ Documentation - Complete
-✅ Testing tools - Complete
-✅ Deployment guides - Complete
-✅ Examples - Complete
+- Python 3.10+
+- `python-telegram-bot >= 22.6`
+- `openpyxl` — Excel export
+- `Pillow` — Image processing
+- `reportlab` — PDF export
+- `matplotlib` — Graph export
+- `SpeechRecognition` + `pydub` — Voice transcription
+- `google-generativeai` — Gemini AI receipt analysis
+- `python-dotenv` — Environment variable loading
+- One of: `pytesseract` / `easyocr` / `paddleocr` — OCR
 
-**Everything is ready!** 🎉
-
----
-
-## 📞 Next Steps
-
-1. **Read [QUICKSTART.md](QUICKSTART.md)** - 5 minute guide
-2. **Run `python startup.py`** - Verify setup
-3. **Run `python main.py`** - Start bot
-4. **Open Telegram** - Send `/start`
-5. **Start tracking!** - Send "Spent 100 for food"
+See `requirements.txt` for pinned versions.
 
 ---
 
-## 🎯 Remember
+## 🔒 Security Notes
 
-- 📝 **Just type naturally** - "Spent 150 for biriyani"
-- 📸 **Upload receipts** - Bot will extract data
-- 📊 **Check summaries** - Use /summary command
-- 💾 **Data is local** - Stays on your device
-- 🚀 **Easy to deploy** - See DEPLOYMENT.md
+- The bot token in `config.py` should be moved to a `.env` file and excluded from version control.
+- Add `expenses.db` and `*.env` to your `.gitignore`.
+- Each user's data is isolated by their Telegram user ID.
 
 ---
 
-## 🌟 You Now Have
+## 📄 License
 
-✨ A complete Telegram expense tracking bot
-✨ NLP-powered expense parsing
-✨ Receipt OCR processing
-✨ Database with analytics
-✨ 10+ working commands
-✨ Complete documentation
-✨ Testing & diagnostic tools
-✨ Deployment guides
-✨ Everything ready to use!
-
----
-
-## 🎉 Congratulations!
-
-Your **Expense Tracker AI Agent** is complete and ready to use!
-
-**Start with:** `python main.py` 🚀
-
-**Questions?** Check [INDEX.md](INDEX.md) for navigation
-
-**Happy expense tracking!** 💰
-
----
-
-**Version:** 1.0.0
-**Status:** ✅ Production Ready
-**Created:** January 25, 2026
-**Bot Token:* 
-#   E x p e n s e - T r a c k e r - A I - A g e n t  
- 
+MIT License — free to use, modify, and distribute.

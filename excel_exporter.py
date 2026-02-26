@@ -253,11 +253,11 @@ class ExcelExporter:
         ws.column_dimensions['D'].width = 20
         ws.column_dimensions['E'].width = 46
         ws.column_dimensions['F'].width = 20
-        ws.column_dimensions['G'].width = 30
-        ws.column_dimensions['H'].width = 30
+        ws.column_dimensions['G'].width = 50
+        ws.column_dimensions['H'].width = 50
         ws.column_dimensions['I'].width = 20
         ws.column_dimensions['J'].width = 26
-        ws.column_dimensions['K'].width = 28
+        ws.column_dimensions['K'].width = 50
         
         # Add summary sheet
         self._add_summary_sheet(wb, user_id, expenses)
@@ -712,11 +712,11 @@ class ExcelExporter:
         ws.column_dimensions['D'].width = 20
         ws.column_dimensions['E'].width = 46
         ws.column_dimensions['F'].width = 20
-        ws.column_dimensions['G'].width = 30
-        ws.column_dimensions['H'].width = 30
+        ws.column_dimensions['G'].width = 50
+        ws.column_dimensions['H'].width = 50
         ws.column_dimensions['I'].width = 20
         ws.column_dimensions['J'].width = 26
-        ws.column_dimensions['K'].width = 28
+        ws.column_dimensions['K'].width = 50
 
     def _add_pattern_summary_sheet(self, wb, expenses, sheet_name="Pattern Summary"):
         """Add summary of extracted pattern names with amount/count."""
