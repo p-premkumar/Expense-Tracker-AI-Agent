@@ -53,7 +53,7 @@ expense-tracker-bot/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/expense-tracker-bot.git
+git clone https://github.com/p-premkumar/Expense-Tracker-AI-Agent
 cd expense-tracker-bot
 ```
 
