@@ -542,7 +542,7 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
     # Create CSV content
     csv_content = "Date,Category,Amount,Description\n"
-    for exp_id, amount, category, description, date in expenses:
+    for exp_id, amount, category, description, date, *_ in expenses:
         csv_content += f'"{date}","{category}","{amount}","{description}"\n'
     
     # Save to file

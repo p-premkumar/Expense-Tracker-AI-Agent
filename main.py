@@ -440,11 +440,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"Error processing receipt: {str(e)}\n"
             f"Please try again or manually enter the amount."
         )
-
-    # Clean up temp file
-    import os
-    if os.path.exists("temp_receipt.jpg"):
-        os.remove("temp_receipt.jpg")
+    finally:
+        # Clean up temp file even on early returns.
+        import os
+        if os.path.exists("temp_receipt.jpg"):
+            os.remove("temp_receipt.jpg")
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -515,11 +515,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"❌ Error processing voice: {str(e)}\n"
             f"Please try again or manually enter the amount."
         )
-    
-    # Clean up
-    import os
-    if os.path.exists("temp_voice.ogg"):
-        os.remove("temp_voice.ogg")
+    finally:
+        # Clean up temp file even on early returns.
+        import os
+        if os.path.exists("temp_voice.ogg"):
+            os.remove("temp_voice.ogg")
 
 
 def _extract_ocr_text(result):

@@ -148,6 +148,152 @@ class ExpenseParser:
 
         return totals
 
+    def extract_simple_receipt(self, receipt_text):
+        """
+        Lightweight receipt extraction used by helper scripts.
+        Returns: dict with final_amount/category + key totals.
+        """
+        text = (receipt_text or "").strip()
+        result = {
+            "category": "Other",
+            "final_amount": None,
+            "subtotal": None,
+            "total": None,
+            "grand_total": None,
+            "items": [],
+            "raw_text": text,
+        }
+
+        if not text:
+            return result
+
+        def _to_float(value):
+            try:
+                if value is None:
+                    return None
+                parsed = float(value)
+                return parsed if parsed > 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        analysis = self.analyze_receipt(text)
+        if isinstance(analysis, dict):
+            result["items"] = analysis.get("items") or []
+
+        bill_totals = self.extract_bill_totals(text)
+        subtotal = _to_float(bill_totals.get("subtotal"))
+        total = _to_float(bill_totals.get("total"))
+        grand_total = _to_float(bill_totals.get("grand_total"))
+
+        if isinstance(analysis, dict):
+            subtotal = subtotal or _to_float(analysis.get("subtotal"))
+            total = total or _to_float(analysis.get("total"))
+            grand_total = grand_total or _to_float(analysis.get("grand_total"))
+
+        parsed_amount = None
+        if isinstance(analysis, dict):
+            parsed_amount = _to_float(analysis.get("final_amount") or analysis.get("amount"))
+        if not parsed_amount:
+            amount, _, _ = self.parse_expense(text)
+            parsed_amount = _to_float(amount)
+
+        final_amount = grand_total or total or parsed_amount or subtotal
+
+        item_categories = []
+        for item in result["items"]:
+            if not isinstance(item, dict):
+                continue
+            category = (item.get("category") or "").strip()
+            if category and category != "Other":
+                item_categories.append(category)
+
+        if item_categories:
+            result["category"] = item_categories[0]
+        else:
+            inferred = self._extract_category(text.lower())
+            result["category"] = inferred if inferred else "Other"
+
+        result["subtotal"] = subtotal
+        result["total"] = total
+        result["grand_total"] = grand_total
+        result["final_amount"] = final_amount
+        return result
+
+    def format_receipt_plain_text(self, analysis):
+        """
+        Convert structured receipt analysis dict into plain readable text.
+        """
+        if not isinstance(analysis, dict):
+            return "No receipt analysis data available."
+
+        def _fmt_amount(value):
+            try:
+                if value is None:
+                    return None
+                return f"{float(value):.2f}"
+            except (TypeError, ValueError):
+                return None
+
+        lines = ["Food Items:"]
+        items = analysis.get("items") or []
+        rendered_items = 0
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            price = (
+                item.get("total_price")
+                if item.get("total_price") is not None
+                else item.get("amount")
+            )
+            if price is None:
+                price = item.get("unit_price")
+            amount_text = _fmt_amount(price)
+            if amount_text:
+                lines.append(f"{rendered_items + 1}. {name} - {amount_text}")
+            else:
+                lines.append(f"{rendered_items + 1}. {name}")
+            rendered_items += 1
+
+        if rendered_items == 0:
+            lines.append("No line items detected")
+
+        subtotal = _fmt_amount(analysis.get("subtotal"))
+        if subtotal:
+            lines.append(f"Subtotal: {subtotal}")
+
+        tax_value = analysis.get("tax")
+        if isinstance(tax_value, dict):
+            gst = _fmt_amount(tax_value.get("gst"))
+            other_tax = _fmt_amount(tax_value.get("other"))
+            if gst:
+                lines.append(f"Tax: {gst}")
+            elif other_tax:
+                lines.append(f"Tax: {other_tax}")
+        else:
+            tax = _fmt_amount(tax_value)
+            if tax:
+                lines.append(f"Tax: {tax}")
+
+        final_amount = _fmt_amount(
+            analysis.get("final_amount")
+            or analysis.get("grand_total")
+            or analysis.get("total")
+        )
+        if final_amount:
+            lines.append(f"Total Amount: {final_amount}")
+        else:
+            lines.append("Total Amount: N/A")
+
+        category = analysis.get("category")
+        if not category:
+            category = self._extract_category("\n".join(lines).lower())
+        lines.append(f"Category: {category or 'Other'}")
+        return "\n".join(lines)
+
     def _extract_pattern_keyword(self, text_lower, category=None):
         """Return matched keyword from EXPENSE_PATTERNS, preferring the given category."""
         if not text_lower:
@@ -848,6 +994,73 @@ class ExpenseParser:
 
 
 # ============================================================================
+# ORIGINAL METHOD: Tesseract OCR
+# ============================================================================
+
+class OCRProcessor:
+    """Extract text from images using Tesseract OCR."""
+
+    def __init__(self):
+        self.parser = ExpenseParser()
+        self._configure_tesseract()
+
+    def _configure_tesseract(self):
+        """Configure Tesseract path on Windows when installed in default location."""
+        try:
+            import os
+            import pytesseract
+
+            default_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+            if os.path.exists(default_path):
+                pytesseract.pytesseract.tesseract_cmd = default_path
+        except Exception:
+            # Keep default pytesseract resolution if explicit path setup fails.
+            pass
+
+    def extract_text_from_image(self, image_path):
+        """Extract OCR text from image path."""
+        try:
+            import os
+            from PIL import Image
+            import pytesseract
+
+            if not os.path.exists(image_path):
+                logger.error("Image file not found: %s", image_path)
+                return ""
+
+            with Image.open(image_path) as image:
+                return (pytesseract.image_to_string(image) or "").strip()
+        except Exception as ocr_error:
+            logger.error("Tesseract OCR failed: %s", ocr_error)
+            return ""
+
+    def parse_receipt(self, image_path):
+        """Parse OCR output and return normalized receipt fields."""
+        text = self.extract_text_from_image(image_path)
+
+        if not text:
+            return {
+                "amount": None,
+                "category": None,
+                "description": None,
+                "source": "receipt",
+                "text": None,
+                "raw_text": None,
+                "error": "Could not extract text from image",
+            }
+
+        amount, category, description = self.parser.parse_expense(text)
+        return {
+            "amount": amount,
+            "category": category,
+            "description": description or text[:100],
+            "source": "receipt",
+            "text": text,
+            "raw_text": text,
+        }
+
+
+# ============================================================================
 # ALTERNATIVE METHOD 1: EasyOCR (No system software needed!)
 # ============================================================================
 
@@ -938,6 +1151,7 @@ class EasyOCRProcessor:
             'category': category,
             'description': description or text[:100],
             'source': 'receipt',
+            'text': text,
             'raw_text': text
         }
 
@@ -1036,6 +1250,7 @@ class PaddleOCRProcessor:
             'category': category,
             'description': description or text[:100],
             'source': 'receipt',
+            'text': text,
             'raw_text': text
         }
 

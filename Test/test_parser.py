@@ -86,7 +86,7 @@ def test_database_operations():
     expenses = db.get_expenses(test_user_id, days=30)
     print(f"Found {len(expenses)} expenses\n")
     
-    for exp_id, amount, category, description, date in expenses:
+    for exp_id, amount, category, description, date, *_ in expenses:
         print(f"   - {category}: Rs {amount:.2f}")
     
     print()
